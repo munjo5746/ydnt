@@ -1,0 +1,41 @@
+name: YouDontNeedThat
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    DEVELOPMENT_TEAM: V3CD35TG78
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  YouDontNeedThat:
+    type: application
+    platform: macOS
+    sources: [YouDontNeedThat]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.edwardchung.ydnt
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: YouDontNeedThat/Info.plist
+      properties:
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.utilities
+        NSDesktopFolderUsageDescription: Looking for files you don't need.
+        NSDocumentsFolderUsageDescription: Looking for files you don't need.
+        NSDownloadsFolderUsageDescription: Looking for downloads you forgot about.
+    scheme:
+      testTargets: [YouDontNeedThatTests]
+  YouDontNeedThatTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [YouDontNeedThatTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: YouDontNeedThat

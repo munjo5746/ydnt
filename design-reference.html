@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>You Don't Need That – pie chart</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&amp;family=JetBrains+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#0B0C0E}
+a{color:#C6F24E}a:hover{color:#E2FF8A}
+button{font:inherit;cursor:pointer}
+.leg:hover{background:#1C1E23}
+.slice{transition:d 0.25s ease, opacity 0.2s ease}
+</style>
+</helmet>
+<div style="box-sizing: border-box; min-height: 100vh; padding: 40px 16px; font-family: 'Space Grotesk', system-ui, sans-serif; color: #ECEDEF; font-size: 14px">
+<div style="max-width: 1160px; margin: 0 auto; background: #141518; border-radius: 12px; border: 1px solid #2A2C32; box-shadow: 0 30px 80px rgba(0,0,0,0.55); overflow: hidden; display: flex; flex-direction: column">
+
+<!-- Title bar -->
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 14px 20px; border-bottom: 1px solid #24262B; background: #101114">
+<div style="display: flex; gap: 8px" aria-hidden="true">
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840"></span>
+</div>
+<span style="font-weight: 700; letter-spacing: -0.01em">You Don't Need That</span>
+<div style="flex: 1 1 20px"></div>
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9A9CA3">
+<sc-if value="{{isDetail}}" hint-placeholder-val="{{ false }}">
+<button onClick="{{goBack}}" style="display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px 0 8px; border-radius: 8px; border: 1px solid #3A3C43; background: transparent; color: #ECEDEF; font-size: 13px">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+Back
+</button>
+<span>All places</span>
+<span aria-hidden="true">/</span>
+<span style="color: #ECEDEF; font-weight: 500">{{levelName}}</span>
+</sc-if>
+<sc-if value="{{isHome}}" hint-placeholder-val="{{ true }}">
+<span style="color: #ECEDEF; font-weight: 500">All places</span>
+</sc-if>
+</nav>
+</div>
+
+<!-- Heading -->
+<div style="padding: 28px 36px 0; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
+<div style="display: flex; flex-direction: column; gap: 6px; min-width: 0">
+<h1 style="margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1">{{heading}}</h1>
+<span style="color: #9A9CA3; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px">{{levelPath}}</span>
+</div>
+<span style="color: #9A9CA3; font-size: 13px">{{hint}}</span>
+</div>
+
+<!-- Chart + legend -->
+<div style="display: flex; flex-wrap: wrap; gap: 32px; padding: 24px 36px 32px; align-items: flex-start">
+
+<!-- Donut -->
+<div style="flex: 1 1 340px; display: flex; justify-content: center">
+<div style="position: relative; width: 100%; max-width: 420px; aspect-ratio: 1 / 1">
+<sc-for list="{{slices}}" as="s" hint-placeholder-count="8">
+<svg viewBox="0 0 200 200" style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none" aria-hidden="true">
+<path class="slice" d="{{s.d}}" fill="{{s.color}}" fill-opacity="{{s.opacity}}" stroke="#141518" stroke-width="1.2" style="pointer-events: auto; cursor: pointer" onClick="{{s.click}}" onMouseEnter="{{s.enter}}" onMouseLeave="{{leave}}"></path>
+</svg>
+</sc-for>
+<div style="position: absolute; inset: 22%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; pointer-events: none">
+<span style="color: #9A9CA3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{center.kicker}}</span>
+<span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 30px; font-weight: 600; color: {{accent}}">{{center.size}}</span>
+<span style="font-size: 15px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{center.name}}</span>
+<span style="color: #8A8C93; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{center.path}}</span>
+</div>
+</div>
+</div>
+
+<!-- Legend -->
+<div style="flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; border-top: 1px solid #26282D">
+<sc-for list="{{slices}}" as="s" hint-placeholder-count="8">
+<button class="leg" onClick="{{s.click}}" onMouseEnter="{{s.enter}}" onMouseLeave="{{leave}}" style="{{s.rowStyle}}">
+<span style="{{s.swatch}}" aria-hidden="true"></span>
+<span style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+<span style="font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{s.name}}</span>
+<span style="color: #8A8C93; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{s.path}}</span>
+</span>
+<span style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px">
+<span style="font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 15px; font-weight: 600">{{s.sizeLabel}}</span>
+<span style="color: #8A8C93; font-size: 12px">{{s.pct}}</span>
+</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<!-- Footer -->
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 36px; border-top: 1px solid #26282D; background: #111215">
+<span style="color: #9A9CA3; font-size: 13px">{{footerNote}}</span>
+<div style="flex: 1 1 20px"></div>
+<sc-if value="{{isDetail}}" hint-placeholder-val="{{ false }}">
+<button disabled="{{noPick}}" style="min-height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #3A3C43; background: transparent; color: #ECEDEF; font-size: 14px">Show in Finder</button>
+<button disabled="{{noPick}}" style="{{trashStyle}}">Yeet to Trash</button>
+</sc-if>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#C6F24E","options":["#C6F24E","#FF8A3D","#7DD3FC","#F0ABFC"]},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    this.state = { open: null, hover: null, pick: null };
+  }
+  data() {
+    return [
+      { id: 'large', name: 'Large Files', path: '~ (anywhere)', tint: '#F87171', files: [
+        ['Windows11_ARM.vmdk', '~/Parallels/Windows 11.pvm/Windows11_ARM.vmdk', 24.5e9],
+        ['wedding-raw-footage.zip', '~/Movies/wedding-raw-footage.zip', 11.2e9],
+        ['Docker.raw', '~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw', 8.0e9]
+      ]},
+      { id: 'xcode', name: 'Xcode Junk', path: '~/Library/Developer/Xcode', tint: '#38BDF8', files: [
+        ['DerivedData', '~/Library/Developer/Xcode/DerivedData', 9.8e9],
+        ['iOS DeviceSupport', '~/Library/Developer/Xcode/iOS DeviceSupport', 6.1e9],
+        ['Archives', '~/Library/Developer/Xcode/Archives', 2.4e9]
+      ]},
+      { id: 'caches', name: 'Caches', path: '~/Library/Caches', tint: '#818CF8', files: [
+        ['com.spotify.client', '~/Library/Caches/com.spotify.client', 4.2e9],
+        ['Google Chrome', '~/Library/Caches/Google/Chrome', 2.9e9],
+        ['com.apple.Music', '~/Library/Caches/com.apple.Music', 1.1e9],
+        ['Homebrew', '~/Library/Caches/Homebrew', 860e6],
+        ['com.tinyspeck.slackmacgap', '~/Library/Caches/com.tinyspeck.slackmacgap', 610e6],
+        ['pip', '~/Library/Caches/pip', 340e6],
+        ['com.microsoft.VSCode.ShipIt', '~/Library/Caches/com.microsoft.VSCode.ShipIt', 220e6]
+      ]},
+      { id: 'backups', name: 'iOS Backups', path: '~/Library/Application Support/MobileSync/Backup', tint: '#F472B6', files: [
+        ['iPhone 11 backup', '~/Library/Application Support/MobileSync/Backup/00008030-001A', 7.6e9]
+      ]},
+      { id: 'downloads', name: 'Old Downloads', path: '~/Downloads', tint: '#C084FC', files: [
+        ['Xcode_15.4.xip', '~/Downloads/Xcode_15.4.xip', 3.4e9],
+        ['ubuntu-24.04-desktop-arm64.iso', '~/Downloads/ubuntu-24.04-desktop-arm64.iso', 2.9e9],
+        ['Zoom.pkg', '~/Downloads/Zoom.pkg', 140e6],
+        ['scan_0042.pdf', '~/Downloads/scan_0042.pdf', 38e6]
+      ]},
+      { id: 'trash', name: 'Trash', path: '~/.Trash', tint: '#A1A1AA', files: [
+        ['Final_v3_REAL_final.mov', '~/.Trash/Final_v3_REAL_final.mov', 2.2e9],
+        ['old-node_modules', '~/.Trash/old-node_modules', 640e6]
+      ]},
+      { id: 'mail', name: 'Mail Attachments', path: '~/Library/Containers/com.apple.mail', tint: '#4ADE80', files: [
+        ['Mail Downloads', '~/Library/Containers/com.apple.mail/Data/Library/Mail Downloads', 1.3e9]
+      ]},
+      { id: 'logs', name: 'Logs', path: '~/Library/Logs', tint: '#FBBF24', files: [
+        ['DiagnosticReports', '~/Library/Logs/DiagnosticReports', 410e6],
+        ['JetBrains', '~/Library/Logs/JetBrains', 180e6],
+        ['Adobe', '~/Library/Logs/Adobe', 96e6]
+      ]}
+    ];
+  }
+  renderVals() {
+    const accent = this.props.accent ?? '#C6F24E';
+    const fmt = (b) => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : Math.round(b / 1e3) + ' KB';
+    const pt = (a, r) => (100 + r * Math.sin(a)).toFixed(2) + ' ' + (100 - r * Math.cos(a)).toFixed(2);
+    const arc = (a0, a1, R, r) => {
+      const span = Math.min(a1 - a0, Math.PI * 2 - 0.0005);
+      const e = a0 + span;
+      const lg = span > Math.PI ? 1 : 0;
+      return 'M ' + pt(a0, R) + ' A ' + R + ' ' + R + ' 0 ' + lg + ' 1 ' + pt(e, R) + ' L ' + pt(e, r) + ' A ' + r + ' ' + r + ' 0 ' + lg + ' 0 ' + pt(a0, r) + ' Z';
+    };
+    const cats = this.data().map((c) => ({ ...c, total: c.files.reduce((s, f) => s + f[2], 0) })).sort((a, b) => b.total - a.total);
+    const grand = cats.reduce((s, c) => s + c.total, 0);
+    const cur = cats.find((c) => c.id === this.state.open);
+    const shades = [1, 0.8, 0.64, 0.5, 0.4, 0.32, 0.25];
+
+    // Items at the current level
+    const items = cur
+      ? cur.files.slice().sort((a, b) => b[2] - a[2]).map((f, i) => ({ key: f[1], name: f[0], path: f[1], bytes: f[2], color: cur.tint, opacity: shades[i % shades.length] }))
+      : cats.map((c) => ({ key: c.id, name: c.name, path: c.path, bytes: c.total, color: c.tint, opacity: 1 }));
+    const levelTotal = items.reduce((s, it) => s + it.bytes, 0);
+    const hover = this.state.hover;
+    const pick = this.state.pick;
+
+    let a = 0;
+    const slices = items.map((it) => {
+      const frac = it.bytes / levelTotal;
+      const a0 = a; const a1 = a + frac * Math.PI * 2; a = a1;
+      const active = hover === it.key || pick === it.key;
+      const dim = (hover || pick) && !active;
+      const click = cur
+        ? () => this.setState({ pick: pick === it.key ? null : it.key })
+        : () => this.setState({ open: it.key, hover: null, pick: null });
+      return {
+        key: it.key, name: it.name, path: it.path,
+        sizeLabel: fmt(it.bytes),
+        pct: (frac * 100 < 1 ? '<1' : Math.round(frac * 100)) + '%',
+        d: arc(a0, a1, active ? 100 : 94, active ? 56 : 60),
+        color: it.color,
+        opacity: dim ? it.opacity * 0.45 : it.opacity,
+        swatch: 'display: block; width: 12px; height: 12px; border-radius: 3px; background: ' + it.color + '; opacity: ' + it.opacity,
+        rowStyle: 'display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 56px; padding: 8px 10px; border: 0; border-bottom: 1px solid #26282D; text-align: left; color: #ECEDEF; background: ' + (active ? '#22242A' : 'transparent'),
+        click,
+        enter: () => this.setState({ hover: it.key })
+      };
+    });
+
+    const focus = items.find((it) => it.key === hover) || items.find((it) => it.key === pick);
+    const center = focus
+      ? { kicker: Math.round((focus.bytes / levelTotal) * 100) + '% of ' + (cur ? cur.name : 'total'), size: fmt(focus.bytes), name: focus.name, path: focus.path }
+      : cur
+        ? { kicker: 'This directory', size: fmt(cur.total), name: cur.name, path: cur.path }
+        : { kicker: 'Reclaimable', size: fmt(grand), name: cats.length + ' places', path: '~' };
+    const picked = cur ? items.find((it) => it.key === pick) : null;
+
+    return {
+      accent,
+      isHome: !cur,
+      isDetail: !!cur,
+      slices,
+      center,
+      leave: () => this.setState({ hover: null }),
+      goBack: () => this.setState({ open: null, hover: null, pick: null }),
+      levelName: cur ? cur.name : '',
+      heading: cur ? cur.name + ': ' + fmt(cur.total) : 'Where your space went',
+      levelPath: cur ? cur.path : 'Your home folder, scanned for clutter',
+      hint: cur ? 'Click a slice to select it.' : 'Click a slice to look inside.',
+      footerNote: cur
+        ? (picked ? picked.name + ' · ' + fmt(picked.bytes) + ' selected' : 'Nothing selected. Pick a slice you don’t need.')
+        : 'Nothing is deleted until you say so. Everything goes to the Trash first.',
+      noPick: !picked,
+      trashStyle: 'min-height: 40px; padding: 0 18px; border-radius: 8px; border: 0; background: ' + accent + '; color: #141518; font-size: 14px; font-weight: 700; opacity: ' + (picked ? '1' : '0.4') + '; cursor: ' + (picked ? 'pointer' : 'default')
+    };
+  }
+}
+</script>
+</body>
+</html>
