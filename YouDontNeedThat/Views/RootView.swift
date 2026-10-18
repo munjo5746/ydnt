@@ -4,14 +4,15 @@ struct RootView: View {
     @State private var model = ScanModel()
     @State private var open: Category?
     @State private var hovered: String?
-    @State private var picked: String?
+    @State private var basket: [ScanItem: Category] = [:]   // queued for yeeting, across all categories
     @State private var errorMessage: String?
 
     private var openResult: CategoryResult? { open.flatMap { model.results[$0] } }
     private var slices: [Slice] { openResult.map(Slice.items) ?? Slice.categories(model.results) }
     private var total: Int64 { slices.reduce(0) { $0 + $1.bytes } }
-    private var focused: Slice? { slices.first { $0.id == hovered } ?? slices.first { $0.id == picked } }
-    private var pickedItem: ScanItem? { openResult?.items.first { $0.id == picked } }
+    private var focused: Slice? { slices.first { $0.id == hovered } }
+    private var basketBytes: Int64 { basket.keys.reduce(0) { $0 + $1.bytes } }
+    private func queued(_ id: String) -> Bool { basket.keys.contains { $0.id == id } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,6 +91,7 @@ struct RootView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(slices) { s in
                             LegendRow(slice: s, percent: percent(s.bytes), active: s.id == focused?.id,
+                                      queued: open != nil && queued(s.id),
                                       onHover: { hovered = $0 ? s.id : nil }, onTap: { tapped(s.id) })
                         }
                     }
@@ -123,18 +125,19 @@ struct RootView: View {
             if open == nil, model.needsAccess {
                 Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
             }
-            if let c = open {
-                Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle()).disabled(pickedItem == nil)
-                Button("Yeet to Trash") { yeet(c) }.buttonStyle(AccentButtonStyle()).disabled(pickedItem == nil || c == .trash)
+            if !basket.isEmpty {
+                Button("Clear") { basket = [:] }.buttonStyle(OutlineButtonStyle())
+                Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
+                Button("Yeet \(basket.count) to Trash") { yeetAll() }.buttonStyle(AccentButtonStyle())
             }
         }
     }
 
     private var footerNote: String {
-        guard let c = open else { return "Nothing is deleted until you say so. Everything goes to the Trash first." }
-        if c == .trash { return "Already in the Trash. Empty it from Finder when you're sure." }
-        if let p = pickedItem { return "\(p.name) · \(Theme.bytes(p.bytes)) selected" }
-        return "Nothing selected. Pick a slice you don't need."
+        if open == .trash { return "Already in the Trash. Empty it from Finder when you're sure." }
+        if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) queued" }
+        if open == nil { return "Nothing is deleted until you say so. Everything goes to the Trash first." }
+        return "Nothing queued. Pick the slices you don't need."
     }
 
     // MARK: Actions
@@ -146,31 +149,36 @@ struct RootView: View {
     }
 
     private func tapped(_ id: String) {
-        if open != nil {
-            picked = picked == id ? nil : id
+        if let c = open {
+            guard c != .trash, let item = model.results[c]?.items.first(where: { $0.id == id }) else { return }
+            if basket.removeValue(forKey: item) == nil { basket[item] = c }
         } else if let c = Category(rawValue: id) {
             if model.results[c]?.status == .needsAccess { ScanModel.openFullDiskAccessSettings(); return }
-            withAnimation(.easeInOut(duration: 0.25)) { open = c; hovered = nil; picked = nil }
+            withAnimation(.easeInOut(duration: 0.25)) { open = c; hovered = nil }
         }
     }
 
     private func goBack() {
-        withAnimation(.easeInOut(duration: 0.25)) { open = nil; hovered = nil; picked = nil }
+        withAnimation(.easeInOut(duration: 0.25)) { open = nil; hovered = nil }
     }
 
     private func reveal() {
-        guard let p = pickedItem else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([p.url])
+        NSWorkspace.shared.activateFileViewerSelecting(basket.keys.map(\.url))
     }
 
-    private func yeet(_ c: Category) {
-        guard let p = pickedItem else { return }
-        do {
-            try FileManager.default.trashItem(at: p.url, resultingItemURL: nil)
-            picked = nil
-            model.rescan(c)
-        } catch {
-            errorMessage = error.localizedDescription
+    private func yeetAll() {
+        var failed: [String] = []
+        var touched = Set<Category>()
+        for (item, c) in basket {
+            do {
+                try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+                basket[item] = nil
+                touched.insert(c)
+            } catch {
+                failed.append("\(item.name): \(error.localizedDescription)")
+            }
         }
+        touched.forEach(model.rescan)
+        if !failed.isEmpty { errorMessage = failed.joined(separator: "\n") }
     }
 }

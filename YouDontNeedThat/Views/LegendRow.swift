@@ -4,6 +4,7 @@ struct LegendRow: View {
     let slice: Slice
     let percent: String
     let active: Bool
+    let queued: Bool
     let onHover: (Bool) -> Void
     let onTap: () -> Void
 
@@ -18,11 +19,14 @@ struct LegendRow: View {
                 }
                 Spacer(minLength: 8)
                 trailing
+                if queued {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent).font(.system(size: 16))
+                }
             }
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(minHeight: 56)
-            .background(active ? Theme.rowActive : .clear)
+            .background(active || queued ? Theme.rowActive : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
