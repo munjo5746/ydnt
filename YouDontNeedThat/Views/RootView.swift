@@ -6,6 +6,7 @@ struct RootView: View {
     @State private var hovered: String?
     @State private var basket: [ScanItem: Category] = [:]   // queued for yeeting, across all categories
     @State private var errorMessage: String?
+    @State private var showQueue = false
 
     private var openResult: CategoryResult? { open.flatMap { model.results[$0] } }
     private var slices: [Slice] { openResult.map(Slice.items) ?? Slice.categories(model.results) }
@@ -126,11 +127,58 @@ struct RootView: View {
                 Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
             }
             if !basket.isEmpty {
-                Button("Clear") { basket = [:] }.buttonStyle(OutlineButtonStyle())
-                Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
+                Button("Review list") { showQueue = true }.buttonStyle(OutlineButtonStyle())
+                    .popover(isPresented: $showQueue, arrowEdge: .bottom) { queueList }
                 Button("Yeet \(basket.count) to Trash") { yeetAll() }.buttonStyle(AccentButtonStyle())
             }
         }
+    }
+
+    private var queueList: some View {
+        let items = basket.keys.sorted { $0.bytes > $1.bytes }
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Queued for the Trash").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button("Clear all") { basket = [:]; showQueue = false }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
+            }
+            .padding(16)
+            Theme.divider.frame(height: 1)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(items) { item in
+                        HStack(spacing: 12) {
+                            RoundedRectangle(cornerRadius: 3).fill(basket[item]!.color).frame(width: 10, height: 10)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name).font(.system(size: 13, weight: .medium))
+                                Text(item.url.abbreviatedPath).font(.system(size: 10)).monospaced().foregroundStyle(Theme.tertiary)
+                            }
+                            Spacer(minLength: 8)
+                            Text(Theme.bytes(item.bytes)).font(.system(size: 13)).monospaced()
+                            Button { basket[item] = nil; if basket.isEmpty { showQueue = false } } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.secondary)
+                            }
+                            .buttonStyle(.plain).help("Put back")
+                        }
+                        .lineLimit(1).truncationMode(.middle)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+                    }
+                }
+            }
+            .frame(maxHeight: 400)
+            HStack {
+                Text("\(items.count) item\(items.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes))").foregroundStyle(Theme.secondary)
+                Spacer()
+                Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
+                Button("Yeet to Trash") { showQueue = false; yeetAll() }.buttonStyle(AccentButtonStyle())
+            }
+            .font(.system(size: 13))
+            .padding(16)
+        }
+        .frame(width: 520)
+        .background(Theme.window)
+        .foregroundStyle(Theme.text)
     }
 
     private var footerNote: String {
