@@ -12,8 +12,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 
 xcodegen generate
 xcodebuild archive -project YouDontNeedThat.xcodeproj -scheme YouDontNeedThat -configuration Release \
-  -archivePath "$OUT/YouDontNeedThat.xcarchive" -destination 'generic/platform=macOS' | xcbeautify 2>/dev/null || true
-[ -d "$OUT/YouDontNeedThat.xcarchive" ] || { echo "archive failed"; exit 1; }
+  -archivePath "$OUT/YouDontNeedThat.xcarchive" -destination 'generic/platform=macOS' -quiet
 xcodebuild -exportArchive -archivePath "$OUT/YouDontNeedThat.xcarchive" -exportOptionsPlist ExportOptions.plist -exportPath "$OUT"
 
 ditto -c -k --keepParent "$APP" "$ZIP"
