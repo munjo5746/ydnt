@@ -4,9 +4,10 @@ struct RootView: View {
     @State private var model = ScanModel()
     @State private var open: Category?
     @State private var hovered: String?
-    @State private var basket: [ScanItem: Category] = [:]   // queued for yeeting, across all categories
+    @State private var basket: [ScanItem: Category] = [:]   // queued for deletion, across all categories
     @State private var errorMessage: String?
     @State private var showQueue = false
+    @State private var confirmDelete = false
 
     private var openResult: CategoryResult? { open.flatMap { model.results[$0] } }
     private var slices: [Slice] { openResult.map(Slice.items) ?? Slice.categories(model.results) }
@@ -129,7 +130,6 @@ struct RootView: View {
             if !basket.isEmpty {
                 Button("Review list") { showQueue = true }.buttonStyle(OutlineButtonStyle())
                     .popover(isPresented: $showQueue, arrowEdge: .bottom) { queueList }
-                Button("Yeet \(basket.count) to Trash") { yeetAll() }.buttonStyle(AccentButtonStyle())
             }
         }
     }
@@ -138,7 +138,7 @@ struct RootView: View {
         let items = basket.keys.sorted { $0.bytes > $1.bytes }
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Queued for the Trash").font(.system(size: 15, weight: .semibold))
+                Text("Queued for deletion").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button("Clear all") { basket = [:]; showQueue = false }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
             }
@@ -171,20 +171,23 @@ struct RootView: View {
                 Text("\(items.count) item\(items.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes))").foregroundStyle(Theme.secondary)
                 Spacer()
                 Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
-                Button("Yeet to Trash") { showQueue = false; yeetAll() }.buttonStyle(AccentButtonStyle())
+                Button("Delete \(items.count) file\(items.count == 1 ? "" : "s")") { confirmDelete = true }.buttonStyle(AccentButtonStyle())
             }
             .font(.system(size: 13))
             .padding(16)
         }
+        .confirmationDialog("Permanently delete \(items.count) file\(items.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { showQueue = false; deleteAll() }
+        } message: { Text("This skips the Trash. There is no undo.") }
         .frame(width: 520)
         .background(Theme.window)
         .foregroundStyle(Theme.text)
     }
 
     private var footerNote: String {
-        if open == .trash { return "Already in the Trash. Empty it from Finder when you're sure." }
         if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) queued" }
-        if open == nil { return "Nothing is deleted until you say so. Everything goes to the Trash first." }
+        if open == nil { return "Nothing is deleted until you say so." }
         return "Nothing queued. Pick the slices you don't need."
     }
 
@@ -198,7 +201,7 @@ struct RootView: View {
 
     private func tapped(_ id: String) {
         if let c = open {
-            guard c != .trash, let item = model.results[c]?.items.first(where: { $0.id == id }) else { return }
+            guard let item = model.results[c]?.items.first(where: { $0.id == id }) else { return }
             if basket.removeValue(forKey: item) == nil { basket[item] = c }
         } else if let c = Category(rawValue: id) {
             if model.results[c]?.status == .needsAccess { ScanModel.openFullDiskAccessSettings(); return }
@@ -214,12 +217,12 @@ struct RootView: View {
         NSWorkspace.shared.activateFileViewerSelecting(basket.keys.map(\.url))
     }
 
-    private func yeetAll() {
+    private func deleteAll() {
         var failed: [String] = []
         var touched = Set<Category>()
         for (item, c) in basket {
             do {
-                try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+                try FileManager.default.removeItem(at: item.url)
                 basket[item] = nil
                 touched.insert(c)
             } catch {
