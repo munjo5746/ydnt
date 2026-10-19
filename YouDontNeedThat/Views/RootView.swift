@@ -19,8 +19,10 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             titleBar
-            level.id(open).transition(.opacity)
-            if showQueue, !basket.isEmpty { queuePanel }
+            ZStack(alignment: .bottom) {
+                level.id(open).transition(.opacity)
+                if showQueue, !basket.isEmpty { queuePanel }
+            }
             footer
         }
         .animation(.easeInOut(duration: 0.2), value: showQueue)
@@ -152,6 +154,8 @@ struct RootView: View {
                 Spacer()
                 Button("Show in Finder") { reveal() }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
                 Button("Clear all") { basket = [:] }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                Button { showQueue = false } label: { Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(Theme.secondary).padding(.leading, 8)
             }
             .font(.system(size: 13))
             .padding(.horizontal, 36).padding(.vertical, 12)
@@ -178,10 +182,12 @@ struct RootView: View {
                     }
                 }
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: 280)
         }
+        .fixedSize(horizontal: false, vertical: true)
         .background(Theme.footer)
         .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+        .shadow(color: .black.opacity(0.5), radius: 20, y: -4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
