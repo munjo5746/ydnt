@@ -20,8 +20,15 @@ struct RootView: View {
         VStack(spacing: 0) {
             titleBar
             level.id(open).transition(.opacity)
+            if showQueue, !basket.isEmpty { queuePanel }
             footer
         }
+        .animation(.easeInOut(duration: 0.2), value: showQueue)
+        .animation(.easeInOut(duration: 0.2), value: basket.isEmpty)
+        .confirmationDialog("Permanently delete \(basket.count) file\(basket.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { deleteAll() }
+        } message: { Text("This skips the Trash. There is no undo.") }
         .background(Theme.window)
         .foregroundStyle(Theme.text)
         .preferredColorScheme(.dark)
@@ -128,21 +135,26 @@ struct RootView: View {
                 Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
             }
             if !basket.isEmpty {
-                Button("Review list") { showQueue = true }.buttonStyle(OutlineButtonStyle())
-                    .popover(isPresented: $showQueue, arrowEdge: .bottom) { queueList }
+                Button { showQueue.toggle() } label: {
+                    Label(showQueue ? "Hide list" : "Review list", systemImage: showQueue ? "chevron.down" : "chevron.up")
+                }
+                .buttonStyle(OutlineButtonStyle())
+                Button("Delete \(basket.count) file\(basket.count == 1 ? "" : "s")") { confirmDelete = true }.buttonStyle(AccentButtonStyle())
             }
         }
     }
 
-    private var queueList: some View {
+    private var queuePanel: some View {
         let items = basket.keys.sorted { $0.bytes > $1.bytes }
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Queued for deletion").font(.system(size: 15, weight: .semibold))
+                Text("Queued for deletion").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button("Clear all") { basket = [:]; showQueue = false }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                Button("Show in Finder") { reveal() }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                Button("Clear all") { basket = [:] }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
             }
-            .padding(16)
+            .font(.system(size: 13))
+            .padding(.horizontal, 36).padding(.vertical, 12)
             Theme.divider.frame(height: 1)
             ScrollView {
                 VStack(spacing: 0) {
@@ -155,34 +167,22 @@ struct RootView: View {
                             }
                             Spacer(minLength: 8)
                             Text(Theme.bytes(item.bytes)).font(.system(size: 13)).monospaced()
-                            Button { basket[item] = nil; if basket.isEmpty { showQueue = false } } label: {
+                            Button { basket[item] = nil } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.secondary)
                             }
                             .buttonStyle(.plain).help("Put back")
                         }
                         .lineLimit(1).truncationMode(.middle)
-                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .padding(.horizontal, 36).frame(minHeight: 40)
                         .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
                     }
                 }
             }
-            .frame(maxHeight: 400)
-            HStack {
-                Text("\(items.count) item\(items.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes))").foregroundStyle(Theme.secondary)
-                Spacer()
-                Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
-                Button("Delete \(items.count) file\(items.count == 1 ? "" : "s")") { confirmDelete = true }.buttonStyle(AccentButtonStyle())
-            }
-            .font(.system(size: 13))
-            .padding(16)
+            .frame(maxHeight: 220)
         }
-        .confirmationDialog("Permanently delete \(items.count) file\(items.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
-                            isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { showQueue = false; deleteAll() }
-        } message: { Text("This skips the Trash. There is no undo.") }
-        .frame(width: 520)
-        .background(Theme.window)
-        .foregroundStyle(Theme.text)
+        .background(Theme.footer)
+        .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var footerNote: String {
