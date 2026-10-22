@@ -6,7 +6,8 @@ struct RootView: View {
     @State private var hovered: String?
     @State private var basket: [ScanItem: Category] = [:]   // queued for deletion, across all categories
     @State private var errorMessage: String?
-    @State private var showQueue = false
+    @State private var reviewing = false      // showing the delete list instead of the chart
+    @State private var deleting = false
     @State private var confirmDelete = false
 
     private var openResult: CategoryResult? { open.flatMap { model.results[$0] } }
@@ -19,14 +20,13 @@ struct RootView: View {
     var body: some View {
         VStack(spacing: 0) {
             titleBar
-            ZStack(alignment: .bottom) {
-                level.id(open).transition(.opacity)
-                if showQueue, !basket.isEmpty { queuePanel }
+            Group {
+                if reviewing { deleteList } else { level.id(open) }
             }
+            .transition(.opacity)
             footer
         }
-        .animation(.easeInOut(duration: 0.2), value: showQueue)
-        .animation(.easeInOut(duration: 0.2), value: basket.isEmpty)
+        .onChange(of: basket.isEmpty) { _, empty in if empty { reviewing = false } }
         .confirmationDialog("Permanently delete \(basket.count) file\(basket.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { deleteAll() }
@@ -49,14 +49,15 @@ struct RootView: View {
             Text("You Don't Need That").font(.system(size: 14, weight: .bold))
             Spacer()
             HStack(spacing: 8) {
-                if let c = open {
+                if let here = reviewing ? "Delete list" : open?.name {
                     Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }
                         .buttonStyle(OutlineButtonStyle())
                         .keyboardShortcut("[", modifiers: .command)
                         .controlSize(.small)
+                        .disabled(deleting)
                     Text("All places").foregroundStyle(Theme.secondary)
                     Text("/").foregroundStyle(Theme.secondary)
-                    Text(c.name).fontWeight(.medium)
+                    Text(here).fontWeight(.medium)
                 } else {
                     Text("All places").fontWeight(.medium)
                 }
@@ -136,63 +137,65 @@ struct RootView: View {
             if open == nil, model.needsAccess {
                 Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
             }
-            if !basket.isEmpty {
-                Button { showQueue.toggle() } label: {
-                    Label(showQueue ? "Hide list" : "Review list", systemImage: showQueue ? "chevron.down" : "chevron.up")
-                }
-                .buttonStyle(OutlineButtonStyle())
-                Button("Delete \(basket.count) file\(basket.count == 1 ? "" : "s")") { confirmDelete = true }.buttonStyle(AccentButtonStyle())
+            if reviewing {
+                if deleting { ProgressView().controlSize(.small) }
+                Button(deleting ? "Deleting…" : "Delete \(basket.count) file\(basket.count == 1 ? "" : "s")") { confirmDelete = true }
+                    .buttonStyle(AccentButtonStyle()).disabled(deleting)
+            } else if !basket.isEmpty {
+                Button("Review delete list (\(basket.count))") { withAnimation(.easeInOut(duration: 0.25)) { reviewing = true; hovered = nil } }
+                    .buttonStyle(AccentButtonStyle())
             }
         }
     }
 
-    private var queuePanel: some View {
+    private var deleteList: some View {
         let items = basket.keys.sorted { $0.bytes > $1.bytes }
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Queued for deletion").font(.system(size: 13, weight: .semibold))
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Delete list: \(Theme.bytes(basketBytes))").font(.system(size: 34, weight: .bold)).tracking(-1)
+                    Text("Nothing is deleted until you confirm. Remove anything you want to keep.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                }
                 Spacer()
-                Button("Show in Finder") { reveal() }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
-                Button("Clear all") { basket = [:] }.buttonStyle(.plain).foregroundStyle(Theme.secondary)
-                Button { showQueue = false } label: { Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)) }
-                    .buttonStyle(.plain).foregroundStyle(Theme.secondary).padding(.leading, 8)
+                HStack(spacing: 10) {
+                    Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
+                    Button("Clear all") { basket = [:] }.buttonStyle(OutlineButtonStyle())
+                }
+                .controlSize(.small).disabled(deleting)
             }
-            .font(.system(size: 13))
-            .padding(.horizontal, 36).padding(.vertical, 12)
-            Theme.divider.frame(height: 1)
+            .padding(EdgeInsets(top: 28, leading: 36, bottom: 24, trailing: 36))
+
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
                     ForEach(items) { item in
-                        HStack(spacing: 12) {
-                            RoundedRectangle(cornerRadius: 3).fill(basket[item]!.color).frame(width: 10, height: 10)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name).font(.system(size: 13, weight: .medium))
-                                Text(item.url.abbreviatedPath).font(.system(size: 10)).monospaced().foregroundStyle(Theme.tertiary)
+                        HStack(spacing: 14) {
+                            RoundedRectangle(cornerRadius: 3).fill(basket[item]?.color ?? Theme.secondary).frame(width: 12, height: 12)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.name).font(.system(size: 15, weight: .medium))
+                                Text(item.url.abbreviatedPath).font(.system(size: 11)).monospaced().foregroundStyle(Theme.tertiary)
                             }
                             Spacer(minLength: 8)
-                            Text(Theme.bytes(item.bytes)).font(.system(size: 13)).monospaced()
-                            Button { basket[item] = nil } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.secondary)
-                            }
-                            .buttonStyle(.plain).help("Put back")
+                            Text(basket[item]?.name ?? "").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                            Text(Theme.bytes(item.bytes)).font(.system(size: 15, weight: .semibold)).monospaced()
+                                .frame(minWidth: 90, alignment: .trailing)
+                            Button("Keep") { basket[item] = nil }.buttonStyle(OutlineButtonStyle()).controlSize(.small)
+                                .disabled(deleting).help("Remove from the delete list")
                         }
                         .lineLimit(1).truncationMode(.middle)
-                        .padding(.horizontal, 36).frame(minHeight: 40)
+                        .padding(.horizontal, 10).frame(minHeight: 56)
                         .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
                     }
                 }
             }
-            .frame(maxHeight: 280)
+            .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+            .padding(EdgeInsets(top: 0, leading: 36, bottom: 32, trailing: 36))
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Theme.footer)
-        .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
-        .shadow(color: .black.opacity(0.5), radius: 20, y: -4)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var footerNote: String {
-        if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) queued" }
+        if deleting { return "Deleting \(basket.count) item\(basket.count == 1 ? "" : "s")… big folders take a while." }
+        if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) on the delete list" }
         if open == nil { return "Nothing is deleted until you say so." }
         return "Nothing queued. Pick the slices you don't need."
     }
@@ -216,26 +219,36 @@ struct RootView: View {
     }
 
     private func goBack() {
-        withAnimation(.easeInOut(duration: 0.25)) { open = nil; hovered = nil }
+        guard !deleting else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            if reviewing { reviewing = false } else { open = nil }
+            hovered = nil
+        }
     }
 
     private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting(basket.keys.map(\.url))
     }
 
+    /// Deletes off the main thread: removing a folder like DerivedData touches every file inside it.
     private func deleteAll() {
-        var failed: [String] = []
-        var touched = Set<Category>()
-        for (item, c) in basket {
-            do {
-                try FileManager.default.removeItem(at: item.url)
-                basket[item] = nil
-                touched.insert(c)
-            } catch {
-                failed.append("\(item.name): \(error.localizedDescription)")
+        let batch = basket
+        deleting = true
+        Task {
+            let failed = await Task.detached { () -> [ScanItem: String] in
+                var failed: [ScanItem: String] = [:]
+                for item in batch.keys {
+                    do { try FileManager.default.removeItem(at: item.url) } catch { failed[item] = error.localizedDescription }
+                }
+                return failed
+            }.value
+            let done = batch.filter { failed[$0.key] == nil }
+            for item in done.keys { basket[item] = nil }
+            Set(done.values).forEach(model.rescan)
+            deleting = false
+            if !failed.isEmpty {
+                errorMessage = failed.map { "\($0.key.name): \($0.value)" }.sorted().joined(separator: "\n")
             }
         }
-        touched.forEach(model.rescan)
-        if !failed.isEmpty { errorMessage = failed.joined(separator: "\n") }
     }
 }
