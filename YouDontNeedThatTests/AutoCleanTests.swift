@@ -3,25 +3,25 @@ import XCTest
 
 final class AutoCleanTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_000_000_000)
-    private func c(_ name: String, daysAgo: Double, minAge: Int = 0) -> Candidate {
-        Candidate(url: URL(fileURLWithPath: "/w/\(name)"), modified: now.addingTimeInterval(-daysAgo * 86_400), minAgeDays: minAge, source: "w")
+    private func c(_ name: String, daysAgo: Double) -> Candidate {
+        Candidate(url: URL(fileURLWithPath: "/w/\(name)"), modified: now.addingTimeInterval(-daysAgo * 86_400), source: "w")
     }
 
     func testPlanTakesOldestFirstUntilNeedIsCovered() {
         let sizes = ["a": 50, "b": 30, "c": 100, "d": 10] as [String: Int64]
         let candidates = [c("a", daysAgo: 1), c("b", daysAgo: 10), c("c", daysAgo: 5), c("d", daysAgo: 20)]
-        let picks = AutoCleaner.plan(candidates, need: 120, now: now) { sizes[$0.lastPathComponent]! }
+        let picks = AutoCleaner.plan(candidates, need: 120) { sizes[$0.lastPathComponent]! }
         XCTAssertEqual(picks.map(\.item.name), ["d", "b", "c"])   // 10 + 30 + 100 ≥ 120, stops before a
         XCTAssertEqual(picks.map(\.item.bytes), [10, 30, 100])
     }
 
-    func testPlanSkipsTooYoungAndSizesOnlyWhatItTakes() {
+    func testPlanSizesOnlyWhatItTakes() {
         var sized: [String] = []
-        let candidates = [c("young", daysAgo: 3, minAge: 7), c("old", daysAgo: 8, minAge: 7), c("older", daysAgo: 9, minAge: 7)]
-        let picks = AutoCleaner.plan(candidates, need: 1, now: now) { sized.append($0.lastPathComponent); return 5 }
+        let candidates = [c("new", daysAgo: 3), c("old", daysAgo: 8), c("older", daysAgo: 9)]
+        let picks = AutoCleaner.plan(candidates, need: 1) { sized.append($0.lastPathComponent); return 5 }
         XCTAssertEqual(picks.map(\.item.name), ["older"])
         XCTAssertEqual(sized, ["older"])
-        XCTAssertTrue(AutoCleaner.plan(candidates, need: 0, now: now) { _ in 5 }.isEmpty)
+        XCTAssertTrue(AutoCleaner.plan(candidates, need: 0) { _ in 5 }.isEmpty)
     }
 
     func testNeed() {
