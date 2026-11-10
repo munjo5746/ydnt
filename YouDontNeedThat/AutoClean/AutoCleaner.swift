@@ -3,7 +3,6 @@ import ServiceManagement
 
 struct WatchedFolder: Codable, Hashable, Identifiable, Sendable {
     var path: String
-    var minAgeDays: Int
     var id: String { path }
     var url: URL { URL(fileURLWithPath: path) }
     var name: String { url.lastPathComponent }
@@ -34,7 +33,6 @@ struct DiskSpace: Equatable {
 struct Candidate: Sendable {
     let url: URL
     let modified: Date
-    let minAgeDays: Int
     let source: String
 }
 
@@ -71,7 +69,7 @@ enum CleanState: Equatable {
         case .low(let f): "Only \(Self.pct(f)) free. Starting cleanup."
         case .deleting(let d, let t, let b): "Deleting \(d) of \(t). \(Theme.bytes(b)) freed so far."
         case .freed(let b): "Freed \(Theme.bytes(b)). Back above the threshold."
-        case .stuck(let f): "Still \(Self.pct(f)) free and nothing old enough left to delete. Add folders or lower their age limits."
+        case .stuck(let f): "Still \(Self.pct(f)) free and nothing left to delete. Add more folders."
         }
     }
 
@@ -188,20 +186,17 @@ final class AutoCleaner {
             ((try? DiskScanner.children(of: f.url)) ?? []).map { url in
                 Candidate(url: url,
                           modified: (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast,
-                          minAgeDays: f.minAgeDays, source: f.name)
+                          source: f.name)
             }
         }
     }
 
-    /// Oldest eligible first, until `need` bytes are covered. Sizes lazily: only what it takes gets measured.
+    /// Oldest first, until `need` bytes are covered. Sizes lazily: only what it takes gets measured.
     // ponytail: "oldest" is the entry's own mtime; a folder whose files changed deep inside can look older than it is.
-    nonisolated static func plan(_ candidates: [Candidate], need: Int64, now: Date = .now, size: (URL) -> Int64) -> [Pick] {
+    nonisolated static func plan(_ candidates: [Candidate], need: Int64, size: (URL) -> Int64) -> [Pick] {
         var picks: [Pick] = []
         var total: Int64 = 0
-        let eligible = candidates
-            .filter { $0.modified < now.addingTimeInterval(-Double($0.minAgeDays) * 86_400) }
-            .sorted { $0.modified < $1.modified }
-        for c in eligible where total < need {
+        for c in candidates.sorted(by: { $0.modified < $1.modified }) where total < need {
             let bytes = size(c.url)
             total += bytes
             picks.append(Pick(item: ScanItem(url: c.url, bytes: bytes), source: c.source))

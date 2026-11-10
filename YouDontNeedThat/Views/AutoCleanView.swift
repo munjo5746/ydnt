@@ -29,7 +29,7 @@ struct AutoCleanView: View {
                 Spacer()
                 Menu {
                     ForEach(Category.allCases.filter { $0 != .largeFiles }) { c in
-                        Button("\(c.name) — \(c.displayPath)") { add(c.roots, minAgeDays: c.defaultAgeDays) }
+                        Button("\(c.name) — \(c.displayPath)") { add(c.roots) }
                             .disabled(c.roots.allSatisfy(watched))
                     }
                     Divider()
@@ -48,16 +48,13 @@ struct AutoCleanView: View {
                         Text("No folders yet. Nothing will be deleted until you add one.")
                             .font(.system(size: 13)).foregroundStyle(Theme.secondary).padding(.vertical, 20)
                     }
-                    ForEach($cleaner.settings.folders) { $f in
+                    ForEach(cleaner.settings.folders) { f in
                         HStack(spacing: 14) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(f.name).font(.system(size: 15, weight: .medium))
                                 Text(f.url.abbreviatedPath).font(.system(size: 11)).monospaced().foregroundStyle(Theme.tertiary)
                             }
                             Spacer(minLength: 8)
-                            Stepper(f.minAgeDays == 0 ? "Anything" : "Older than \(f.minAgeDays) day\(f.minAgeDays == 1 ? "" : "s")",
-                                    value: $f.minAgeDays, in: 0...365)
-                                .font(.system(size: 13)).monospacedDigit()
                             Button { cleaner.settings.folders.removeAll { $0.id == f.id } } label: { Image(systemName: "xmark") }
                                 .buttonStyle(.borderless).help("Stop watching this folder")
                         }
@@ -84,17 +81,17 @@ struct AutoCleanView: View {
         panel.allowsMultipleSelection = true
         panel.prompt = "Watch"
         guard panel.runModal() == .OK else { return }
-        add(panel.urls, minAgeDays: 30)
+        add(panel.urls)
     }
 
     private func watched(_ url: URL) -> Bool {
         cleaner.settings.folders.contains { $0.path == url.standardizedFileURL.path(percentEncoded: false) }
     }
 
-    private func add(_ urls: [URL], minAgeDays: Int) {
+    private func add(_ urls: [URL]) {
         for url in urls where !watched(url) {
             guard AutoCleaner.isAllowed(url) else { refused.append(url.abbreviatedPath); continue }
-            cleaner.settings.folders.append(WatchedFolder(path: url.standardizedFileURL.path(percentEncoded: false), minAgeDays: minAgeDays))
+            cleaner.settings.folders.append(WatchedFolder(path: url.standardizedFileURL.path(percentEncoded: false)))
         }
     }
 }
