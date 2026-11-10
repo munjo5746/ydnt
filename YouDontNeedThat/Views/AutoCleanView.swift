@@ -27,7 +27,18 @@ struct AutoCleanView: View {
             HStack {
                 Text("WATCHED FOLDERS").font(.system(size: 12)).tracking(1).foregroundStyle(Theme.secondary)
                 Spacer()
-                Button("Add folder…") { addFolders() }.buttonStyle(OutlineButtonStyle()).controlSize(.small)
+                Menu {
+                    ForEach(Category.allCases.filter { $0 != .largeFiles }) { c in
+                        Button("\(c.name) — \(c.displayPath)") { add(c.roots, minAgeDays: c.defaultAgeDays) }
+                            .disabled(c.roots.allSatisfy(watched))
+                    }
+                    Divider()
+                    Button("Other folder…") { pickFolders() }
+                } label: {
+                    Text("Add folder…")
+                }
+                .menuStyle(.button).menuIndicator(.hidden).fixedSize()
+                .buttonStyle(OutlineButtonStyle()).controlSize(.small)
             }
             .padding(EdgeInsets(top: 28, leading: 36, bottom: 12, trailing: 36))
 
@@ -66,19 +77,24 @@ struct AutoCleanView: View {
         }
     }
 
-    private func addFolders() {
+    private func pickFolders() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.prompt = "Watch"
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
+        add(panel.urls, minAgeDays: 30)
+    }
+
+    private func watched(_ url: URL) -> Bool {
+        cleaner.settings.folders.contains { $0.path == url.standardizedFileURL.path(percentEncoded: false) }
+    }
+
+    private func add(_ urls: [URL], minAgeDays: Int) {
+        for url in urls where !watched(url) {
             guard AutoCleaner.isAllowed(url) else { refused.append(url.abbreviatedPath); continue }
-            let path = url.standardizedFileURL.path(percentEncoded: false)
-            if !cleaner.settings.folders.contains(where: { $0.path == path }) {
-                cleaner.settings.folders.append(WatchedFolder(path: path, minAgeDays: 30))
-            }
+            cleaner.settings.folders.append(WatchedFolder(path: url.standardizedFileURL.path(percentEncoded: false), minAgeDays: minAgeDays))
         }
     }
 }
