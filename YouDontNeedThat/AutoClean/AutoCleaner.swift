@@ -50,16 +50,16 @@ enum CleanState: Equatable {
     case freed(Int64)
     case stuck(free: Double)
 
-    /// Text next to the menu bar icon. nil = icon only.
-    var menuText: String? {
+    /// Small badge drawn after the menu bar icon. nil = plain icon.
+    var badge: String? {
         switch self {
         case .idle: nil
-        case .paused: "Paused"
-        case .planning: "Finding files…"
-        case .low(let f): "⚠︎ \(Self.pct(f)) free"
-        case .deleting(let d, let t, let b): "Deleting \(d)/\(t) · \(Theme.bytes(b))"
-        case .freed(let b): "Freed \(Theme.bytes(b))"
-        case .stuck: "⚠︎ Low, nothing to delete"
+        case .paused: "pause.fill"
+        case .planning: "magnifyingglass"
+        case .low: "exclamationmark"
+        case .deleting: "trash.fill"
+        case .freed: "checkmark"
+        case .stuck: "exclamationmark.triangle.fill"
         }
     }
 
