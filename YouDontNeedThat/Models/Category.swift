@@ -64,6 +64,12 @@ enum Category: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Starting age limit when the category is added to auto-clean.
+    var defaultAgeDays: Int {
+        if case .staleChildren(let days) = rule { return days }
+        return 30
+    }
+
     var displayPath: String {
         switch self {
         case .largeFiles: "~ (anywhere)"

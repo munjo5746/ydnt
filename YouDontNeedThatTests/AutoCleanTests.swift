@@ -40,6 +40,9 @@ final class AutoCleanTests: XCTestCase {
                    home.appending(path: "Library/Developer/Xcode/DerivedData")] {
             XCTAssertTrue(AutoCleaner.isAllowed(ok), ok.path)
         }
+        for c in Category.allCases where c != .largeFiles {
+            for root in c.roots { XCTAssertTrue(AutoCleaner.isAllowed(root), "\(c.name) preset: \(root.path)") }
+        }
     }
 
     @MainActor func testHistoryKeepsNewestAndPersists() throws {
