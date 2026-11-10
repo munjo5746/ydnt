@@ -15,8 +15,8 @@ struct YouDontNeedThatApp: App {
         MenuBarExtra {
             MenuBarPanel().environment(cleaner)
         } label: {
-            Image("MenuBarIcon")
-            if let text = cleaner.state.menuText { Text(text) }
+            Image(nsImage: .menuBarIcon(badge: cleaner.state.badge))
+                .accessibilityLabel(cleaner.state.detail)
         }
         .menuBarExtraStyle(.window)
     }
@@ -35,4 +35,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+extension NSImage {
+    /// "nah." plus an optional SF Symbol badge, as one template image so the menu bar tints it.
+    @MainActor static func menuBarIcon(badge: String?) -> NSImage {
+        let base = NSImage(named: "MenuBarIcon")!
+        guard let badge, let symbol = NSImage(systemSymbolName: badge, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold)) else { return base }
+        let size = NSSize(width: base.size.width + 2 + symbol.size.width, height: base.size.height)
+        let image = NSImage(size: size, flipped: false) { _ in
+            base.draw(in: NSRect(origin: .zero, size: base.size))
+            symbol.draw(in: NSRect(x: base.size.width + 2, y: (size.height - symbol.size.height) / 2,
+                                   width: symbol.size.width, height: symbol.size.height))
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
 }
