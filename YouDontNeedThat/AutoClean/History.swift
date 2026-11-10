@@ -9,6 +9,8 @@ struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     let source: String      // watched folder or category name
     let auto: Bool
     let error: String?
+    var freeBefore: Double? = nil   // disk free fraction around the run; same on every entry of a run
+    var freeAfter: Double? = nil
     var name: String { (path as NSString).lastPathComponent }
 }
 
@@ -25,7 +27,11 @@ final class History {
         var date: Date { entries.first?.date ?? .distantPast }
         var auto: Bool { entries.first?.auto ?? false }
         var freed: Int64 { entries.filter { $0.error == nil }.reduce(0) { $0 + $1.bytes } }
-        var failed: Int { entries.filter { $0.error != nil }.count }
+        var succeeded: [HistoryEntry] { entries.filter { $0.error == nil } }
+        var failures: [HistoryEntry] { entries.filter { $0.error != nil } }
+        var failed: Int { failures.count }
+        var freeBefore: Double? { entries.first?.freeBefore }
+        var freeAfter: Double? { entries.first?.freeAfter }
     }
 
     init(file: URL = .applicationSupportDirectory.appending(path: "YouDontNeedThat/history.json"), cap: Int = 2000) {

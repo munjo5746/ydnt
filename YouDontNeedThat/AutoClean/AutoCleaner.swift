@@ -155,6 +155,7 @@ final class AutoCleaner {
     /// Deletes off the main thread: removing a folder like DerivedData touches every file inside it.
     func delete(_ picks: [Pick], auto: Bool) async -> [HistoryEntry] {
         let run = UUID()
+        let before = DiskSpace.current()?.free
         var entries: [HistoryEntry] = []
         var freed: Int64 = 0
         for (i, p) in picks.enumerated() {
@@ -167,6 +168,8 @@ final class AutoCleaner {
                                         source: p.source, auto: auto, error: error))
             if auto { state = .deleting(done: i + 1, total: picks.count, freed: freed) }
         }
+        let after = DiskSpace.current()?.free
+        for i in entries.indices { entries[i].freeBefore = before; entries[i].freeAfter = after }
         history.append(entries)
         return entries
     }
@@ -231,4 +234,4 @@ final class AutoCleaner {
     }
 }
 
-enum Screen: Equatable { case chart, deleteList, autoClean, history }
+enum Screen: Equatable { case chart, deleteList, autoClean, history(run: UUID?) }
