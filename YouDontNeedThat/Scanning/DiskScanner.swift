@@ -33,11 +33,11 @@ enum DiskScanner {
         return CategoryResult(category: category, status: .scanned, items: items)
     }
 
-    private static func children(of url: URL) throws -> [URL] {
+    static func children(of url: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles)
     }
 
-    private static func item(at url: URL) -> ScanItem? {
+    static func item(at url: URL) -> ScanItem? {
         guard let v = try? url.resourceValues(forKeys: keys) else { return nil }
         let bytes = v.isDirectory == true ? directorySize(url) : Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
         return ScanItem(url: url, bytes: bytes)

@@ -1,12 +1,13 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(AutoCleaner.self) private var cleaner
     @State private var model = ScanModel()
     @State private var open: Category?
     @State private var hovered: String?
     @State private var basket: [ScanItem: Category] = [:]   // queued for deletion, across all categories
     @State private var errorMessage: String?
-    @State private var reviewing = false      // showing the delete list instead of the chart
+    @State private var screen = Screen.chart
     @State private var deleting = false
     @State private var confirmDelete = false
 
@@ -21,12 +22,25 @@ struct RootView: View {
         VStack(spacing: 0) {
             titleBar
             Group {
-                if reviewing { deleteList } else { level.id(open) }
+                switch screen {
+                case .chart: level.id(open)
+                case .deleteList: deleteList
+                case .autoClean: AutoCleanView()
+                case .history: HistoryView()
+                }
             }
             .transition(.opacity)
             footer
         }
-        .onChange(of: basket.isEmpty) { _, empty in if empty { reviewing = false } }
+        .onChange(of: basket.isEmpty) { _, empty in if empty, screen == .deleteList { screen = .chart } }
+        .onChange(of: cleaner.autoRuns) { model.scanAll() }
+        .onChange(of: cleaner.pendingScreen, initial: true) { _, s in
+            guard let s else { return }
+            screen = s
+            cleaner.pendingScreen = nil
+        }
+        .onAppear { NSApp.setActivationPolicy(.regular) }       // Dock icon only while the window is open
+        .onDisappear { NSApp.setActivationPolicy(.accessory) }
         .confirmationDialog("Permanently delete \(basket.count) file\(basket.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { deleteAll() }
@@ -49,7 +63,7 @@ struct RootView: View {
             Text("You Don't Need That").font(.system(size: 14, weight: .bold))
             Spacer()
             HStack(spacing: 8) {
-                if let here = reviewing ? "Delete list" : open?.name {
+                if let here = screenTitle ?? open?.name {
                     Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }
                         .buttonStyle(OutlineButtonStyle())
                         .keyboardShortcut("[", modifiers: .command)
@@ -63,6 +77,13 @@ struct RootView: View {
                 }
             }
             .font(.system(size: 13))
+            if screen == .chart {
+                HStack(spacing: 8) {
+                    Button("Auto-clean") { go(.autoClean) }
+                    Button("History") { go(.history) }
+                }
+                .buttonStyle(OutlineButtonStyle()).controlSize(.small).disabled(deleting)
+            }
         }
         .padding(.leading, 84)
         .padding(.trailing, 20)
@@ -137,13 +158,21 @@ struct RootView: View {
             if open == nil, model.needsAccess {
                 Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
             }
-            if reviewing {
+            switch screen {
+            case .deleteList:
                 if deleting { ProgressView().controlSize(.small) }
                 Button(deleting ? "Deleting…" : "Delete \(basket.count) file\(basket.count == 1 ? "" : "s")") { confirmDelete = true }
                     .buttonStyle(AccentButtonStyle()).disabled(deleting)
-            } else if !basket.isEmpty {
-                Button("Review delete list (\(basket.count))") { withAnimation(.easeInOut(duration: 0.25)) { reviewing = true; hovered = nil } }
-                    .buttonStyle(AccentButtonStyle())
+            case .autoClean:
+                Button("Run now") { Task { await cleaner.check(force: true) } }.buttonStyle(OutlineButtonStyle())
+            case .history:
+                if !cleaner.history.entries.isEmpty {
+                    Button("Clear history") { cleaner.history.clear() }.buttonStyle(OutlineButtonStyle())
+                }
+            case .chart:
+                if !basket.isEmpty {
+                    Button("Review delete list (\(basket.count))") { go(.deleteList) }.buttonStyle(AccentButtonStyle())
+                }
             }
         }
     }
@@ -193,7 +222,18 @@ struct RootView: View {
         }
     }
 
+    private var screenTitle: String? {
+        switch screen {
+        case .chart: nil
+        case .deleteList: "Delete list"
+        case .autoClean: "Auto-clean"
+        case .history: "History"
+        }
+    }
+
     private var footerNote: String {
+        if screen == .autoClean { return cleaner.state.detail }
+        if screen == .history { return "\(cleaner.history.entries.count) deletion\(cleaner.history.entries.count == 1 ? "" : "s") logged" }
         if deleting { return "Deleting \(basket.count) item\(basket.count == 1 ? "" : "s")… big folders take a while." }
         if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) on the delete list" }
         if open == nil { return "Nothing is deleted until you say so." }
@@ -221,33 +261,32 @@ struct RootView: View {
     private func goBack() {
         guard !deleting else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
-            if reviewing { reviewing = false } else { open = nil }
+            if screen != .chart { screen = .chart } else { open = nil }
             hovered = nil
         }
+    }
+
+    private func go(_ s: Screen) {
+        withAnimation(.easeInOut(duration: 0.25)) { screen = s; hovered = nil }
     }
 
     private func reveal() {
         NSWorkspace.shared.activateFileViewerSelecting(basket.keys.map(\.url))
     }
 
-    /// Deletes off the main thread: removing a folder like DerivedData touches every file inside it.
     private func deleteAll() {
         let batch = basket
         deleting = true
         Task {
-            let failed = await Task.detached { () -> [ScanItem: String] in
-                var failed: [ScanItem: String] = [:]
-                for item in batch.keys {
-                    do { try FileManager.default.removeItem(at: item.url) } catch { failed[item] = error.localizedDescription }
-                }
-                return failed
-            }.value
-            let done = batch.filter { failed[$0.key] == nil }
+            let entries = await cleaner.delete(batch.map { Pick(item: $0.key, source: $0.value.name) }, auto: false)
+            let failed = entries.filter { $0.error != nil }
+            let failedPaths = Set(failed.map(\.path))
+            let done = batch.filter { !failedPaths.contains($0.key.url.path(percentEncoded: false)) }
             for item in done.keys { basket[item] = nil }
             Set(done.values).forEach(model.rescan)
             deleting = false
             if !failed.isEmpty {
-                errorMessage = failed.map { "\($0.key.name): \($0.value)" }.sorted().joined(separator: "\n")
+                errorMessage = failed.map { "\($0.name): \($0.error ?? "")" }.sorted().joined(separator: "\n")
             }
         }
     }
