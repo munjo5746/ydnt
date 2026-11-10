@@ -16,19 +16,8 @@ struct MenuBarPanel: View {
 
             if let run = cleaner.history.runs.first {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("LAST DELETE · \(run.auto ? "AUTO" : "MANUAL")").font(.system(size: 11)).tracking(1).foregroundStyle(Theme.secondary)
-                    Text("\(run.date.formatted(.relative(presentation: .named))) · freed \(Theme.bytes(run.freed)) · \(run.entries.count) item\(run.entries.count == 1 ? "" : "s")"
-                         + (run.failed > 0 ? " · \(run.failed) failed" : ""))
-                        .font(.system(size: 12))
-                    ForEach(cleaner.history.entries.prefix(5)) { e in
-                        HStack {
-                            Text(e.name).foregroundStyle(e.error == nil ? Theme.text : .red)
-                            Spacer()
-                            Text(Theme.bytes(e.bytes)).monospaced().foregroundStyle(Theme.secondary)
-                        }
-                        .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                    }
-                    Button("See all history") { open(.history) }.buttonStyle(.link).font(.system(size: 12))
+                    Button { open(.history(run: run.id)) } label: { lastRun(run) }.buttonStyle(.plain).help("Show this run")
+                    Button("See all history") { open(.history(run: nil)) }.buttonStyle(.link).font(.system(size: 12))
                 }
             }
 
@@ -48,6 +37,28 @@ struct MenuBarPanel: View {
         .foregroundStyle(Theme.text)
         .preferredColorScheme(.dark)
         .onAppear { cleaner.refreshDisk() }
+    }
+
+    private func lastRun(_ run: History.Run) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("LAST DELETE · \(run.auto ? "AUTO" : "MANUAL")").font(.system(size: 11)).tracking(1).foregroundStyle(Theme.secondary)
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+            }
+            Text("\(run.date.formatted(.relative(presentation: .named))) · freed \(Theme.bytes(run.freed)) · \(run.entries.count) item\(run.entries.count == 1 ? "" : "s")"
+                 + (run.failed > 0 ? " · \(run.failed) failed" : ""))
+                .font(.system(size: 12))
+            ForEach(run.entries.prefix(5)) { e in
+                HStack {
+                    Text(e.name).foregroundStyle(e.error == nil ? Theme.text : .red)
+                    Spacer()
+                    Text(Theme.bytes(e.bytes)).monospaced().foregroundStyle(Theme.secondary)
+                }
+                .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private func open(_ screen: Screen?) {

@@ -26,7 +26,7 @@ struct RootView: View {
                 case .chart: level.id(open)
                 case .deleteList: deleteList
                 case .autoClean: AutoCleanView()
-                case .history: HistoryView()
+                case .history(let run): HistoryView(runID: run) { go(.history(run: $0)) }
                 }
             }
             .transition(.opacity)
@@ -63,15 +63,18 @@ struct RootView: View {
             Text("You Don't Need That").font(.system(size: 14, weight: .bold))
             Spacer()
             HStack(spacing: 8) {
-                if let here = screenTitle ?? open?.name {
+                if !crumbs.isEmpty {
                     Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }
                         .buttonStyle(OutlineButtonStyle())
                         .keyboardShortcut("[", modifiers: .command)
                         .controlSize(.small)
                         .disabled(deleting)
                     Text("All places").foregroundStyle(Theme.secondary)
-                    Text("/").foregroundStyle(Theme.secondary)
-                    Text(here).fontWeight(.medium)
+                    ForEach(crumbs.indices, id: \.self) { i in
+                        Text("/").foregroundStyle(Theme.secondary)
+                        Text(crumbs[i]).fontWeight(i == crumbs.count - 1 ? .medium : .regular)
+                            .foregroundStyle(i == crumbs.count - 1 ? Theme.text : Theme.secondary)
+                    }
                 } else {
                     Text("All places").fontWeight(.medium)
                 }
@@ -80,7 +83,7 @@ struct RootView: View {
             if screen == .chart {
                 HStack(spacing: 8) {
                     Button("Auto-clean") { go(.autoClean) }
-                    Button("History") { go(.history) }
+                    Button("History") { go(.history(run: nil)) }
                 }
                 .buttonStyle(OutlineButtonStyle()).controlSize(.small).disabled(deleting)
             }
@@ -165,8 +168,8 @@ struct RootView: View {
                     .buttonStyle(AccentButtonStyle()).disabled(deleting)
             case .autoClean:
                 Button("Run now") { Task { await cleaner.check(force: true) } }.buttonStyle(OutlineButtonStyle())
-            case .history:
-                if !cleaner.history.entries.isEmpty {
+            case .history(let run):
+                if run == nil, !cleaner.history.entries.isEmpty {
                     Button("Clear history") { cleaner.history.clear() }.buttonStyle(OutlineButtonStyle())
                 }
             case .chart:
@@ -222,18 +225,25 @@ struct RootView: View {
         }
     }
 
-    private var screenTitle: String? {
+    /// Breadcrumb after "All places".
+    private var crumbs: [String] {
         switch screen {
-        case .chart: nil
-        case .deleteList: "Delete list"
-        case .autoClean: "Auto-clean"
-        case .history: "History"
+        case .chart: open.map { [$0.name] } ?? []
+        case .deleteList: ["Delete list"]
+        case .autoClean: ["Auto-clean"]
+        case .history(nil): ["History"]
+        case .history(let id?):
+            ["History", cleaner.history.runs.first { $0.id == id }?.date.formatted(date: .abbreviated, time: .shortened) ?? "Run"]
         }
     }
 
     private var footerNote: String {
         if screen == .autoClean { return cleaner.state.detail }
-        if screen == .history { return "\(cleaner.history.entries.count) deletion\(cleaner.history.entries.count == 1 ? "" : "s") logged" }
+        if screen == .history(run: nil) {
+            let n = cleaner.history.runs.count
+            return "\(n) run\(n == 1 ? "" : "s") logged"
+        }
+        if case .history = screen { return "Deleted files skipped the Trash and can't be restored." }
         if deleting { return "Deleting \(basket.count) item\(basket.count == 1 ? "" : "s")… big folders take a while." }
         if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) on the delete list" }
         if open == nil { return "Nothing is deleted until you say so." }
@@ -261,7 +271,7 @@ struct RootView: View {
     private func goBack() {
         guard !deleting else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
-            if screen != .chart { screen = .chart } else { open = nil }
+            if case .history(_?) = screen { screen = .history(run: nil) } else if screen != .chart { screen = .chart } else { open = nil }
             hovered = nil
         }
     }

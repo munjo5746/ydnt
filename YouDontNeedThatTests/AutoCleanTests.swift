@@ -59,5 +59,16 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertEqual(h.runs.map(\.id), [r2, r1])
         XCTAssertEqual(h.runs[0].entries.map(\.name), ["c", "d"])
         XCTAssertEqual(History(file: file, cap: 3).entries.map(\.name), ["d", "c", "b"])
+
+        // Run splits succeeded/failed; old entries without free-space fields still decode.
+        h.append([HistoryEntry(run: r1, date: .now, path: "/x/ok", bytes: 5, source: "x", auto: true, error: nil, freeBefore: 0.08, freeAfter: 0.12),
+                  HistoryEntry(run: r1, date: .now, path: "/x/bad", bytes: 7, source: "x", auto: true, error: "nope", freeBefore: 0.08, freeAfter: 0.12)])
+        let run = h.runs[0]
+        XCTAssertEqual(run.succeeded.map(\.name), ["ok"])
+        XCTAssertEqual(run.failures.map(\.name), ["bad"])
+        XCTAssertEqual(run.freed, 5)
+        XCTAssertEqual(run.freeAfter, 0.12)
+        let old = #"[{"id":"\#(UUID())","run":"\#(UUID())","date":0,"path":"/x/y","bytes":1,"source":"x","auto":false}]"#
+        XCTAssertNil(try JSONDecoder().decode([HistoryEntry].self, from: Data(old.utf8))[0].freeBefore)
     }
 }
