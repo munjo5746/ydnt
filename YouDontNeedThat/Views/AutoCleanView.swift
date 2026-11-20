@@ -75,7 +75,8 @@ struct AutoCleanView: View {
                     }
                     Group {
                         Text(headline).font(.system(size: 24, weight: .bold)).tracking(-0.4)
-                        Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+                        Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft)
+                            .lineLimit(2, reservesSpace: true)   // same height whatever the message
                     }
                     .opacity(busy ? 0.4 : 1)
                 }
@@ -97,34 +98,38 @@ struct AutoCleanView: View {
                 }
                 .animation(.easeInOut(duration: 0.3), value: s)
             }
-            if let waiting {
-                HStack(spacing: 10) {
-                    Button("Clean \(Theme.bytes(waiting.bytes)) now") { Task { await cleaner.check(force: true) } }
-                        .buttonStyle(AccentButtonStyle(height: 38))
-                    Button(showPlan ? "Hide list" : "See what would go") { showPlan.toggle() }
-                        .buttonStyle(OutlineButtonStyle(height: 38))
-                }
-                .disabled(busy)   // the plan is about to change
-                if showPlan {
-                    VStack(alignment: .leading, spacing: 0) {
-                        SectionLabel("Oldest first. This is what would go.").padding(.top, 10).padding(.bottom, 4)
-                        ForEach(cleaner.pending, id: \.item.id) { p in
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(p.item.name)
-                                    Text(p.item.url.abbreviatedPath).font(Theme.mono(11, .regular)).foregroundStyle(Theme.tertiary)
-                                }
-                                .truncationMode(.middle)
-                                Spacer()
-                                Text(p.source).font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 110, alignment: .leading)
-                                Text(Theme.bytes(p.item.bytes)).font(Theme.mono(13)).frame(width: 80, alignment: .trailing)
-                            }
-                            .lineLimit(1).frame(minHeight: 36)
-                            .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
-                        }
+            // Always here, so nothing below jumps as the plan comes and goes; disabled when there's nothing to clean.
+            HStack(spacing: 10) {
+                Button(waiting.map { "Clean \(Theme.bytes($0.bytes)) now" } ?? "Clean now") { Task { await cleaner.check(force: true) } }
+                    .buttonStyle(AccentButtonStyle(height: 38))
+                    .disabled(waiting == nil)
+                Button(showPlan ? "Hide list" : "See what would go") { showPlan.toggle() }
+                    .buttonStyle(OutlineButtonStyle(height: 38))
+            }
+            .disabled(busy || working)   // the plan is about to change
+            if showPlan {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionLabel("Oldest first. This is what would go.").padding(.top, 10).padding(.bottom, 4)
+                    if waiting == nil {
+                        Text("Nothing right now. Space is fine, or nothing in your folders is old enough.")
+                            .foregroundStyle(Theme.tertiary).frame(minHeight: 36)
                     }
-                    .overlay(alignment: .top) { Color(hex: 0x2E3035).frame(height: 1) }
+                    ForEach(waiting == nil ? [] : cleaner.pending, id: \.item.id) { p in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(p.item.name)
+                                Text(p.item.url.abbreviatedPath).font(Theme.mono(11, .regular)).foregroundStyle(Theme.tertiary)
+                            }
+                            .truncationMode(.middle)
+                            Spacer()
+                            Text(p.source).font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 110, alignment: .leading)
+                            Text(Theme.bytes(p.item.bytes)).font(Theme.mono(13)).frame(width: 80, alignment: .trailing)
+                        }
+                        .lineLimit(1).frame(minHeight: 36)
+                        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+                    }
                 }
+                .overlay(alignment: .top) { Color(hex: 0x2E3035).frame(height: 1) }
             }
         }
         .padding(22)
