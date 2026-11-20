@@ -26,7 +26,9 @@ struct YouDontNeedThatApp: App {
 /// The app lives in the menu bar (LSUIElement); the window is extra.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    let cleaner = AutoCleaner()
+    /// Unit tests launch the app as their host: never auto-clean the real disk there.
+    private static let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    let cleaner = AutoCleaner(poll: !testing)
     let scan = ScanModel()     // shared by the window and the menu bar popover
 
     func applicationDidFinishLaunching(_ notification: Notification) {
