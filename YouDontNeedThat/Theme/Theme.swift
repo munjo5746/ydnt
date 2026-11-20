@@ -185,8 +185,8 @@ struct SpacePart: Identifiable {
     }
 }
 
-/// Disk bar like macOS's storage bar: used space split by category from the left, free space light gray on the right
-/// (amber when low), with optional start/stop markers (in % free).
+/// Disk bar like macOS's storage bar: used space split by category from the left, free space light gray on the right,
+/// with optional start/stop markers (in % free) drawn as pins above the bar so they never read as a slice.
 struct SpaceBar: View {
     let free: Double            // 0...1
     var start: Int? = nil
@@ -195,7 +195,6 @@ struct SpaceBar: View {
     var parts: [SpacePart] = [] // empty: used space is one gray block (before the first scan)
 
     var body: some View {
-        let low = start.map { free * 100 < Double($0) } ?? false
         let shown = parts.isEmpty ? [SpacePart(name: "Used", color: SpacePart.other, bytes: 0, fraction: 1 - free)] : parts
         GeometryReader { g in
             let w = g.size.width
@@ -209,7 +208,7 @@ struct SpaceBar: View {
                         .padding(.trailing, 1)      // hairline gap between parts
                         .help(p.scanning ? "Still scanning" : p.bytes > 0 ? "\(p.name): \(Theme.bytes(p.bytes))" : p.name)
                     }
-                    Rectangle().fill(low ? Theme.warn : SpacePart.free)
+                    Rectangle().fill(SpacePart.free)
                         .help("Free")
                 }
                 .background(Theme.track)
@@ -219,18 +218,15 @@ struct SpaceBar: View {
             }
         }
         .frame(height: height)
+        .padding(.top, start == nil && stop == nil ? 0 : MarkerPin.head + 2)   // room for the pin heads
         .accessibilityElement()
         .accessibilityLabel("\(Int((free * 100).rounded()))% free"
                             + shown.filter { $0.bytes > 0 }.map { $0.scanning ? ". Still scanning" : ". \($0.name) \(Theme.bytes($0.bytes))" }.joined())
     }
 
-    /// Dark outline so the marker reads on the light free space too.
     private func mark(_ pct: Int, _ color: Color, _ w: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 1).fill(color)
-            .frame(width: 2, height: height + 6)
-            .padding(1)
-            .background(Theme.ink, in: RoundedRectangle(cornerRadius: 2))
-            .offset(x: w * (1 - Double(pct) / 100) - 2)
+        MarkerPin(color: color, stem: height + 3)
+            .offset(x: w * (1 - Double(pct) / 100) - MarkerPin.width / 2, y: -MarkerPin.head - 2)
     }
 }
 
@@ -287,12 +283,35 @@ struct SpaceLegend: View {
     }
 }
 
+/// Downward triangle with a line through the bar, outlined dark so it reads on any slice or the light free space.
+struct MarkerPin: View {
+    static let width: CGFloat = 9
+    static let head: CGFloat = 6
+    let color: Color
+    var stem: CGFloat = 12
+
+    var body: some View {
+        let shape = Path { p in
+            let w = Self.width, h = Self.head
+            p.move(to: .zero); p.addLine(to: CGPoint(x: w, y: 0)); p.addLine(to: CGPoint(x: w / 2 + 1, y: h))
+            p.addLine(to: CGPoint(x: w / 2 + 1, y: h + stem)); p.addLine(to: CGPoint(x: w / 2 - 1, y: h + stem))
+            p.addLine(to: CGPoint(x: w / 2 - 1, y: h)); p.closeSubpath()
+        }
+        ZStack {
+            shape.stroke(Theme.ink, style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            shape.fill(color)
+        }
+        .frame(width: Self.width, height: Self.head + stem, alignment: .topLeading)
+        .accessibilityHidden(true)
+    }
+}
+
 struct MarkerLegend: View {
     let color: Color
     let text: String
     var body: some View {
         HStack(spacing: 6) {
-            Rectangle().fill(color).frame(width: 2, height: 11)
+            MarkerPin(color: color, stem: 5)
             Text(text)
         }
     }
