@@ -25,6 +25,8 @@ targets:
       path: YouDontNeedThat/Info.plist
       properties:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        CFBundleShortVersionString: $(MARKETING_VERSION)   # else XcodeGen writes "1.0"
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
         LSUIElement: true
         NSDesktopFolderUsageDescription: Looking for files you don't need.
