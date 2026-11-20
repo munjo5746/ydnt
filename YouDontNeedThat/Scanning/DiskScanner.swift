@@ -63,6 +63,32 @@ enum DiskScanner {
         return ScanItem(url: url, bytes: bytes, isDirectory: v.isDirectory == true, modified: v.contentModificationDate)
     }
 
+    /// What auto-clean needs to know before deleting something: size, the newest change anywhere inside,
+    /// and whether anything inside is iCloud-synced. One walk; stops early once it finds synced content.
+    struct Inspection: Sendable {
+        var bytes: Int64
+        var newest: Date
+        var synced: Bool
+    }
+
+    static func inspect(_ url: URL) -> Inspection {
+        let k = keys.union([.isUbiquitousItemKey])
+        guard let v = try? url.resourceValues(forKeys: k) else { return Inspection(bytes: 0, newest: .distantPast, synced: false) }
+        var out = Inspection(bytes: Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0),
+                             newest: v.contentModificationDate ?? .distantPast, synced: v.isUbiquitousItem == true)
+        guard v.isDirectory == true, !out.synced,
+              let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(k), options: [], errorHandler: { _, _ in true })
+        else { return out }
+        for case let f as URL in e {
+            if Task.isCancelled { break }
+            guard let fv = try? f.resourceValues(forKeys: k) else { continue }
+            if fv.isUbiquitousItem == true { out.synced = true; break }
+            out.bytes += Int64(fv.totalFileAllocatedSize ?? fv.fileAllocatedSize ?? 0)
+            if let d = fv.contentModificationDate, d > out.newest { out.newest = d }
+        }
+        return out
+    }
+
     private static func directorySize(_ url: URL) -> Int64 {
         guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [], errorHandler: { _, _ in true }) else { return 0 }
         var total: Int64 = 0

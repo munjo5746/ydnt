@@ -3,6 +3,8 @@ import XCTest
 
 final class AutoCleanTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_000_000_000)
+    private func old(_ bytes: Int64) -> DiskScanner.Inspection { .init(bytes: bytes, newest: .distantPast, synced: false) }
+
     private func c(_ name: String, daysAgo: Double) -> Candidate {
         Candidate(url: URL(fileURLWithPath: "/w/\(name)"), modified: now.addingTimeInterval(-daysAgo * 86_400), source: "w")
     }
@@ -10,7 +12,7 @@ final class AutoCleanTests: XCTestCase {
     func testPlanTakesOldestFirstUntilNeedIsCovered() {
         let sizes = ["a": 50, "b": 30, "c": 100, "d": 10] as [String: Int64]
         let candidates = [c("a", daysAgo: 1), c("b", daysAgo: 10), c("c", daysAgo: 5), c("d", daysAgo: 20)]
-        let picks = AutoCleaner.plan(candidates, need: 120) { sizes[$0.lastPathComponent]! }
+        let picks = AutoCleaner.plan(candidates, need: 120, now: now) { old(sizes[$0.lastPathComponent]!) }
         XCTAssertEqual(picks.map(\.item.name), ["d", "b", "c"])   // 10 + 30 + 100 ≥ 120, stops before a
         XCTAssertEqual(picks.map(\.item.bytes), [10, 30, 100])
     }
@@ -18,10 +20,10 @@ final class AutoCleanTests: XCTestCase {
     func testPlanSizesOnlyWhatItTakes() {
         var sized: [String] = []
         let candidates = [c("new", daysAgo: 3), c("old", daysAgo: 8), c("older", daysAgo: 9)]
-        let picks = AutoCleaner.plan(candidates, need: 1) { sized.append($0.lastPathComponent); return 5 }
+        let picks = AutoCleaner.plan(candidates, need: 1, now: now) { sized.append($0.lastPathComponent); return old(5) }
         XCTAssertEqual(picks.map(\.item.name), ["older"])
         XCTAssertEqual(sized, ["older"])
-        XCTAssertTrue(AutoCleaner.plan(candidates, need: 0) { _ in 5 }.isEmpty)
+        XCTAssertTrue(AutoCleaner.plan(candidates, need: 0, now: now) { _ in old(5) }.isEmpty)
     }
 
     func testNeed() {
@@ -85,15 +87,56 @@ final class AutoCleanTests: XCTestCase {
 
     func testPlanSkipsRecentAppleAndRefused() {
         let candidates = [c("fresh", daysAgo: 1), c("com.apple.Safari", daysAgo: 400), c("refused", daysAgo: 300), c("ok", daysAgo: 10)]
-        let picks = AutoCleaner.plan(candidates, need: .max, now: now, skip: ["/w/refused"]) { _ in 1 }
+        let picks = AutoCleaner.plan(candidates, need: .max, now: now, skip: ["/w/refused"]) { _ in old(1) }
         XCTAssertEqual(picks.map(\.item.name), ["ok"])
     }
 
     func testCachesIgnoreTheRecentRule() {
         let cache = Candidate(url: Category.cachesFolder.appending(path: "com.spotify.client"),
                               modified: now.addingTimeInterval(-3600), source: "Caches")
-        let picks = AutoCleaner.plan([cache, c("fresh", daysAgo: 1)], need: .max, now: now) { _ in 1 }
+        let picks = AutoCleaner.plan([cache, c("fresh", daysAgo: 1)], need: .max, now: now) { _ in
+            .init(bytes: 1, newest: self.now, synced: false)   // changed just now, deep inside too
+        }
         XCTAssertEqual(picks.map(\.item.name), ["com.spotify.client"])
+    }
+
+    /// "Never touched": a folder that looks old but changed deep inside, or holds iCloud content, is skipped.
+    func testPlanChecksInsideFolders() {
+        let candidates = [c("touched-inside", daysAgo: 90), c("synced", daysAgo: 90), c("really-old", daysAgo: 90)]
+        let picks = AutoCleaner.plan(candidates, need: .max, now: now) { url in
+            switch url.lastPathComponent {
+            case "touched-inside": .init(bytes: 1, newest: self.now.addingTimeInterval(-3600), synced: false)
+            case "synced": .init(bytes: 1, newest: .distantPast, synced: true)
+            default: self.old(1)
+            }
+        }
+        XCTAssertEqual(picks.map(\.item.name), ["really-old"])
+    }
+
+    func testInspectSeesDeepChangesAndSize() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appending(path: "ydnt-\(UUID())")
+        let deep = dir.appending(path: "a/b")
+        try fm.createDirectory(at: deep, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        try Data(count: 10_000).write(to: deep.appending(path: "fresh.txt"))
+        let longAgo = Date.now.addingTimeInterval(-90 * 86_400)
+        for p in [dir, dir.appending(path: "a"), deep] { try fm.setAttributes([.modificationDate: longAgo], ofItemAtPath: p.path) }
+        let i = DiskScanner.inspect(dir)
+        XCTAssertGreaterThan(i.newest, Date.now.addingTimeInterval(-60))   // the folder itself looks 90 days old
+        XCTAssertGreaterThanOrEqual(i.bytes, 10_000)
+        XCTAssertFalse(i.synced)
+    }
+
+    func testCloudAndPhotoFoldersRefused() {
+        let home = Category.home
+        for bad in [home.appending(path: "Library/Mobile Documents"), home.appending(path: "Library/Mobile Documents/com~apple~CloudDocs/Old"),
+                    home.appending(path: "Library/CloudStorage/Dropbox"), home.appending(path: "Pictures/Photos Library.photoslibrary/originals")] {
+            XCTAssertFalse(AutoCleaner.isAllowed(bad), bad.path)
+        }
+        XCTAssertTrue(AutoCleaner.isAllowed(home.appending(path: "Pictures/Screenshots")))
+        let lib = Candidate(url: URL(fileURLWithPath: "/w/Photos Library.photoslibrary"), modified: .distantPast, source: "w")
+        XCTAssertTrue(AutoCleaner.photoLibraries.contains(lib.url.pathExtension.lowercased()))
     }
 
     func testOldSettingsDecodeWithDefaults() throws {

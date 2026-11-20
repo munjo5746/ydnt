@@ -30,7 +30,7 @@ struct AutoCleanView: View {
         .alert("Can't watch that", isPresented: Binding(get: { !refused.isEmpty }, set: { _ in refused = [] })) {
             Button("OK") {}
         } message: {
-            Text("\(refused.joined(separator: "\n"))\n\nSystem folders, your home folder and its top-level Library, Documents and Desktop are off limits.")
+            Text("\(refused.joined(separator: "\n"))\n\nSystem folders, your home folder and its top-level Library, Documents and Desktop, iCloud Drive, cloud storage folders and photo libraries are off limits.")
         }
     }
 
@@ -272,8 +272,8 @@ struct AutoCleanView: View {
             Text("Never touched, no matter what").font(.system(size: 15, weight: .semibold))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 8)], spacing: 8) {
                 rule("lock", "Apple and system caches", "com.apple.* and anything macOS refused before. macOS blocks these anyway.")
-                rule("clock", "Anything changed in the last 3 days", "However old the rest of its folder is. Caches are the exception: apps touch them constantly.")
-                rule("icloud", "iCloud Drive and Photos", "Synced stuff is never auto-deleted.")
+                rule("clock", "Anything changed in the last 3 days", "One recently changed file keeps its whole folder. Caches are the exception: apps touch them constantly.")
+                rule("icloud", "iCloud Drive, Photos and cloud folders", "Synced stuff is never auto-deleted, including Dropbox and Google Drive folders.")
             }
         }
     }
@@ -300,7 +300,8 @@ struct AutoCleanView: View {
         let skip = cleaner.skip
         for f in cleaner.settings.folders where eligible[f.path] == nil {
             let picks = await Task.detached {
-                AutoCleaner.plan(AutoCleaner.candidates([f]), need: .max, skip: skip) { DiskScanner.item(at: $0)?.bytes ?? 0 }
+                AutoCleaner.isAllowed(f.url)
+                    ? AutoCleaner.plan(AutoCleaner.candidates([f]), need: .max, skip: skip, inspect: DiskScanner.inspect) : []
             }.value
             eligible[f.path] = (picks.count, picks.reduce(0) { $0 + $1.item.bytes })
         }

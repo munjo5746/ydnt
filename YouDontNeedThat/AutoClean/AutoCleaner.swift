@@ -202,10 +202,10 @@ final class AutoCleaner {
     }
 
     private func plan(need: Int64) async -> [Pick] {
-        let folders = settings.folders.filter(\.enabled)
+        let folders = settings.folders.filter { $0.enabled && Self.isAllowed($0.url) }   // also drops ones added before a rule existed
         let skip = skip
         return await Task.detached {
-            Self.plan(Self.candidates(folders), need: need, skip: skip) { DiskScanner.item(at: $0)?.bytes ?? 0 }
+            Self.plan(Self.candidates(folders), need: need, skip: skip, inspect: DiskScanner.inspect)
         }.value
     }
 
@@ -317,10 +317,14 @@ final class AutoCleaner {
 
     // MARK: Pure parts
 
-    /// Top-level entries of the folders, minus iCloud-synced ones.
+    /// Photos and iPhoto libraries: synced or irreplaceable, never auto-deleted wherever they sit.
+    nonisolated static let photoLibraries: Set<String> = ["photoslibrary", "photolibrary"]
+
+    /// Top-level entries of the folders, minus iCloud-synced items and photo libraries.
     nonisolated static func candidates(_ folders: [WatchedFolder]) -> [Candidate] {
         folders.flatMap { f in
             ((try? DiskScanner.children(of: f.url)) ?? []).compactMap { url in
+                if photoLibraries.contains(url.pathExtension.lowercased()) { return nil }
                 let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isUbiquitousItemKey])
                 if v?.isUbiquitousItem == true { return nil }
                 return Candidate(url: url, modified: v?.contentModificationDate ?? .distantPast, source: f.name)
@@ -332,26 +336,31 @@ final class AutoCleaner {
     /// apps touch their caches constantly, so the rule would leave nothing to clean there.
     nonisolated static let minAge: TimeInterval = 3 * 86_400
 
-    nonisolated static func tooRecent(_ c: Candidate, now: Date) -> Bool {
-        now.timeIntervalSince(c.modified) < minAge
-            && c.url.deletingLastPathComponent().standardizedFileURL.pathComponents != Category.cachesFolder.standardizedFileURL.pathComponents
+    nonisolated static func inCaches(_ url: URL) -> Bool {
+        url.deletingLastPathComponent().standardizedFileURL.pathComponents == Category.cachesFolder.standardizedFileURL.pathComponents
     }
 
-    /// Oldest first, until `need` bytes are covered. Sizes lazily: only what it takes gets measured.
-    /// Skips recent items, Apple's own caches and paths in `skip`.
-    // ponytail: "oldest" is the entry's own mtime; a folder whose files changed deep inside can look older than it is.
+    nonisolated static func tooRecent(_ date: Date, _ url: URL, now: Date) -> Bool {
+        now.timeIntervalSince(date) < minAge && !inCaches(url)
+    }
+
+    /// Oldest first, until `need` bytes are covered. Inspects lazily: only what it takes gets walked.
+    /// Never picks: Apple's caches, paths in `skip`, anything changed in the last `minAge` (anywhere inside it,
+    /// not just the folder's own date) and anything holding iCloud-synced content.
+    // ponytail: ordering uses each entry's own mtime (cheap); the deep check only gates what gets picked.
     nonisolated static func plan(_ candidates: [Candidate], need: Int64, now: Date = .now, skip: Set<String> = [],
-                                 size: (URL) -> Int64) -> [Pick] {
+                                 inspect: (URL) -> DiskScanner.Inspection) -> [Pick] {
         var picks: [Pick] = []
         var total: Int64 = 0
         let eligible = candidates.filter {
-            !tooRecent($0, now: now) && !$0.url.lastPathComponent.hasPrefix("com.apple.")
+            !tooRecent($0.modified, $0.url, now: now) && !$0.url.lastPathComponent.hasPrefix("com.apple.")
                 && !skip.contains($0.url.path(percentEncoded: false))
         }
         for c in eligible.sorted(by: { $0.modified < $1.modified }) where total < need {
-            let bytes = size(c.url)
-            total += bytes
-            picks.append(Pick(item: ScanItem(url: c.url, bytes: bytes), source: c.source))
+            let i = inspect(c.url)
+            if i.synced || tooRecent(i.newest, c.url, now: now) { continue }
+            total += i.bytes
+            picks.append(Pick(item: ScanItem(url: c.url, bytes: i.bytes), source: c.source))
         }
         return picks
     }
@@ -366,8 +375,11 @@ final class AutoCleaner {
                 .map { URL(fileURLWithPath: $0).pathComponents }
         // Watching X deletes X's children, so X may not be a protected folder or any ancestor of one.
         if protected.contains(where: { $0.starts(with: p) }) { return false }
-        // Nor anything inside the system.
+        // Nor anything inside the system, or inside synced cloud storage (a delete there deletes in the cloud too),
+        // or inside a photo library.
         let systemRoots = ["/System", "/usr", "/bin", "/sbin", "/private", "/Applications"].map { URL(fileURLWithPath: $0).pathComponents }
+            + [home.appending(path: "Library/Mobile Documents"), home.appending(path: "Library/CloudStorage")].map(\.pathComponents)
+        if p.contains(where: { photoLibraries.contains(($0 as NSString).pathExtension.lowercased()) }) { return false }
         return !systemRoots.contains { p.starts(with: $0) }
     }
 
