@@ -46,5 +46,12 @@ final class TreemapTests: XCTestCase {
         scan.results = [.homeFolder: r(.homeFolder, 1200), .caches: r(.caches, 600)]
         let squeezed = SpacePart.usage(scan, DiskSpace(available: 100, total: 1000))
         XCTAssertEqual(squeezed.map(\.bytes), [600, 300, 0])
+
+        // Mid-scan: finished categories show, the rest is "Scanning…".
+        scan.results = [.homeFolder: r(.homeFolder, 300), .caches: CategoryResult(category: .caches, status: .scanning, items: [])]
+        let busy = SpacePart.usage(scan, DiskSpace(available: 100, total: 1000))
+        XCTAssertEqual(busy.map(\.name), ["Home Folder", "Scanning…"])
+        XCTAssertEqual(busy.map(\.scanning), [false, true])
+        XCTAssertEqual(busy.last?.bytes, 600)
     }
 }

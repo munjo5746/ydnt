@@ -53,6 +53,7 @@ struct MenuBarPanel: View {
                 Text(Theme.bytes(d.available)).font(Theme.mono(24))
                 Text("free").foregroundStyle(Theme.secondary)
                 Spacer()
+                if scan.isScanning { ProgressView().controlSize(.mini).help("Scanning your files…") }
                 Text("of \(Theme.bytes(d.total)) · Macintosh HD").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
             }
             SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent, parts: SpacePart.usage(scan, d))

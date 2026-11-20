@@ -68,6 +68,7 @@ struct Sidebar: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Macintosh HD").fontWeight(.semibold)
+                if scan.isScanning { ProgressView().controlSize(.mini).help("Scanning your files…") }
                 Spacer()
                 Text("\(CleanState.pct(d.free)) free").font(Theme.mono(11, .regular)).foregroundStyle(Theme.secondary)
             }

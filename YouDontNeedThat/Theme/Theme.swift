@@ -158,14 +158,16 @@ struct SpacePart: Identifiable {
     let color: Color
     let bytes: Int64
     let fraction: Double
+    var scanning = false        // the not-yet-measured rest of used space, while a scan runs
     var id: String { name }
 
     static let other = Color(hex: 0x5B5E66)
 
     /// Scanned categories, largest first, then "Other" for everything the scan doesn't cover (apps, system…).
+    /// While a scan runs, that rest is "Scanning…" instead: it can't yet tell Other from unmeasured categories.
     /// Large Files is left out: those files already sit inside Home Folder or Downloads, so they'd count twice.
     @MainActor static func usage(_ scan: ScanModel, _ disk: DiskSpace) -> [SpacePart] {
-        guard disk.total > 0 else { return [] }
+        guard disk.total > 0, !scan.results.isEmpty else { return [] }
         let used = disk.total - disk.available
         var cats = Category.allCases.filter { $0 != .largeFiles }
             .compactMap { c in scan.results[c].flatMap { $0.status == .scanned && $0.bytes > 0 ? (c, $0.bytes) : nil } }
@@ -175,7 +177,9 @@ struct SpacePart: Identifiable {
         if scanned > used { cats = cats.map { ($0.0, Int64(Double($0.1) * Double(used) / Double(scanned))) } }
         let parts = cats.map { SpacePart(name: $0.0.name, color: $0.0.color, bytes: $0.1, fraction: Double($0.1) / Double(disk.total)) }
         let rest = used - parts.reduce(0) { $0 + $1.bytes }
-        return parts + [SpacePart(name: "Other", color: other, bytes: rest, fraction: Double(rest) / Double(disk.total))]
+        let busy = scan.isScanning
+        return parts + [SpacePart(name: busy ? "Scanning…" : "Other", color: other, bytes: rest,
+                                  fraction: Double(rest) / Double(disk.total), scanning: busy)]
     }
 }
 
@@ -196,10 +200,12 @@ struct SpaceBar: View {
             ZStack(alignment: .leading) {
                 HStack(spacing: 0) {
                     ForEach(shown) { p in
-                        Rectangle().fill(p.color)
-                            .frame(width: max(0, w * p.fraction - 1))
-                            .padding(.trailing, 1)      // hairline gap between parts
-                            .help(p.bytes > 0 ? "\(p.name): \(Theme.bytes(p.bytes))" : p.name)
+                        Group {
+                            if p.scanning { ScanningFill() } else { Rectangle().fill(p.color) }
+                        }
+                        .frame(width: max(0, w * p.fraction - 1))
+                        .padding(.trailing, 1)      // hairline gap between parts
+                        .help(p.scanning ? "Still scanning" : p.bytes > 0 ? "\(p.name): \(Theme.bytes(p.bytes))" : p.name)
                     }
                     Rectangle().fill(low ? Theme.warn : Theme.track)
                         .help("Free")
@@ -213,7 +219,7 @@ struct SpaceBar: View {
         .frame(height: height)
         .accessibilityElement()
         .accessibilityLabel("\(Int((free * 100).rounded()))% free"
-                            + shown.filter { $0.bytes > 0 }.map { ". \($0.name) \(Theme.bytes($0.bytes))" }.joined())
+                            + shown.filter { $0.bytes > 0 }.map { $0.scanning ? ". Still scanning" : ". \($0.name) \(Theme.bytes($0.bytes))" }.joined())
     }
 
     private func mark(_ pct: Int, _ color: Color, _ w: CGFloat) -> some View {
@@ -223,13 +229,44 @@ struct SpaceBar: View {
     }
 }
 
+/// Moving diagonal stripes over gray: space the scan hasn't measured yet. Still when Reduce Motion is on.
+struct ScanningFill: View {
+    @Environment(\.accessibilityReduceMotion) private var still
+
+    var body: some View {
+        TimelineView(.animation(paused: still)) { t in
+            Canvas { ctx, size in
+                ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(SpacePart.other.opacity(0.55)))
+                let gap: CGFloat = 10
+                let phase = still ? 0 : CGFloat(t.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)) * gap
+                var stripes = Path()
+                var x = -size.height - gap + phase
+                while x < size.width {
+                    stripes.move(to: CGPoint(x: x, y: size.height)); stripes.addLine(to: CGPoint(x: x + size.height, y: 0))
+                    x += gap
+                }
+                ctx.stroke(stripes, with: .color(.white.opacity(0.22)), lineWidth: 3)
+            }
+        }
+    }
+}
+
 /// Dot + name + size for each part of the bar, then free space.
 struct SpaceLegend: View {
     let parts: [SpacePart]
     let free: Int64
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)], alignment: .leading, spacing: 6) {
-            ForEach(parts) { item($0.color, $0.name, $0.bytes) }
+            ForEach(parts) { p in
+                if p.scanning {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("Scanning your files…").foregroundStyle(Theme.soft)
+                    }
+                } else {
+                    item(p.color, p.name, p.bytes)
+                }
+            }
             item(Theme.track, "Free", free)
         }
         .font(.system(size: 12))
