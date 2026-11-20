@@ -71,7 +71,7 @@ struct Sidebar: View {
                 Spacer()
                 Text("\(CleanState.pct(d.free)) free").font(Theme.mono(11, .regular)).foregroundStyle(Theme.secondary)
             }
-            SpaceBar(free: d.free, start: cleaner.settings.thresholdPercent, height: 8)
+            SpaceBar(free: d.free, start: cleaner.settings.thresholdPercent, height: 8, parts: SpacePart.usage(scan, d))
             Text("\(Theme.bytes(d.available)) free of \(Theme.bytes(d.total))").font(.system(size: 12)).foregroundStyle(Theme.soft)
             if trash > 0 {
                 VStack(alignment: .leading, spacing: 8) {

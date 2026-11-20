@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AutoCleanView: View {
     @Environment(AutoCleaner.self) private var cleaner
+    @Environment(ScanModel.self) private var scan
     @State private var refused: [String] = []
     @State private var showPlan = false
     @State private var eligible: [String: (count: Int, bytes: Int64)] = [:]   // by folder path
@@ -88,14 +89,16 @@ struct AutoCleanView: View {
                 Toggle("Auto-clean", isOn: $cleaner.settings.enabled).toggleStyle(.switch).labelsHidden().tint(Theme.accent)
             }
             if let d = cleaner.disk {
+                let parts = SpacePart.usage(scan, d)
                 VStack(alignment: .leading, spacing: 8) {
-                    SpaceBar(free: d.free, start: live.thresholdPercent, stop: live.stopPercent, height: 14)
+                    SpaceBar(free: d.free, start: live.thresholdPercent, stop: live.stopPercent, height: 14, parts: parts)
                     HStack(spacing: 18) {
                         Text("\(Theme.bytes(d.available)) free of \(Theme.bytes(d.total)) (\(CleanState.pct(d.free)))")
                         MarkerLegend(color: Theme.amber, text: "Starts below \(live.thresholdPercent)%")
                         MarkerLegend(color: Theme.text, text: "Stops at \(live.stopPercent)%")
                     }
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    if !parts.isEmpty { SpaceLegend(parts: parts, free: d.available).padding(.top, 4) }
                 }
                 .animation(.easeOut(duration: 0.12), value: live)   // short: keeps up with a drag
             }

@@ -152,37 +152,96 @@ struct SectionLabel: View {
     }
 }
 
-/// Disk bar: used space from the left, free space on the right, with optional start/stop markers (in % free).
+/// A colored slice of used space, as a fraction of the whole disk.
+struct SpacePart: Identifiable {
+    let name: String
+    let color: Color
+    let bytes: Int64
+    let fraction: Double
+    var id: String { name }
+
+    static let other = Color(hex: 0x5B5E66)
+
+    /// Scanned categories, largest first, then "Other" for everything the scan doesn't cover (apps, system…).
+    /// Large Files is left out: those files already sit inside Home Folder or Downloads, so they'd count twice.
+    @MainActor static func usage(_ scan: ScanModel, _ disk: DiskSpace) -> [SpacePart] {
+        guard disk.total > 0 else { return [] }
+        let used = disk.total - disk.available
+        var cats = Category.allCases.filter { $0 != .largeFiles }
+            .compactMap { c in scan.results[c].flatMap { $0.status == .scanned && $0.bytes > 0 ? (c, $0.bytes) : nil } }
+            .sorted { $0.1 > $1.1 }
+        // Scans and the volume's free figure aren't measured the same way; never let the parts outgrow "used".
+        let scanned = cats.reduce(0) { $0 + $1.1 }
+        if scanned > used { cats = cats.map { ($0.0, Int64(Double($0.1) * Double(used) / Double(scanned))) } }
+        let parts = cats.map { SpacePart(name: $0.0.name, color: $0.0.color, bytes: $0.1, fraction: Double($0.1) / Double(disk.total)) }
+        let rest = used - parts.reduce(0) { $0 + $1.bytes }
+        return parts + [SpacePart(name: "Other", color: other, bytes: rest, fraction: Double(rest) / Double(disk.total))]
+    }
+}
+
+/// Disk bar like macOS's storage bar: used space split by category from the left, free space empty on the right
+/// (amber when low), with optional start/stop markers (in % free).
 struct SpaceBar: View {
     let free: Double            // 0...1
     var start: Int? = nil
     var stop: Int? = nil
     var height: CGFloat = 10
+    var parts: [SpacePart] = [] // empty: used space is one gray block (before the first scan)
 
     var body: some View {
         let low = start.map { free * 100 < Double($0) } ?? false
+        let shown = parts.isEmpty ? [SpacePart(name: "Used", color: SpacePart.other, bytes: 0, fraction: 1 - free)] : parts
         GeometryReader { g in
             let w = g.size.width
             ZStack(alignment: .leading) {
-                Capsule().fill(Theme.track)
-                UnevenRoundedRectangle(topLeadingRadius: height / 2, bottomLeadingRadius: height / 2)
-                    .fill(Theme.usedSpace).frame(width: w * (1 - free))
-                UnevenRoundedRectangle(bottomTrailingRadius: height / 2, topTrailingRadius: height / 2)
-                    .fill(low ? Theme.warn : Theme.accent).frame(width: w * free)
-                    .offset(x: w * (1 - free))
+                HStack(spacing: 0) {
+                    ForEach(shown) { p in
+                        Rectangle().fill(p.color)
+                            .frame(width: max(0, w * p.fraction - 1))
+                            .padding(.trailing, 1)      // hairline gap between parts
+                            .help(p.bytes > 0 ? "\(p.name): \(Theme.bytes(p.bytes))" : p.name)
+                    }
+                    Rectangle().fill(low ? Theme.warn : Theme.track)
+                        .help("Free")
+                }
+                .background(Theme.track)
+                .clipShape(Capsule())
                 if let start { mark(start, Theme.amber, w) }
                 if let stop { mark(stop, Theme.text, w) }
             }
         }
         .frame(height: height)
         .accessibilityElement()
-        .accessibilityLabel("\(Int((free * 100).rounded()))% free")
+        .accessibilityLabel("\(Int((free * 100).rounded()))% free"
+                            + shown.filter { $0.bytes > 0 }.map { ". \($0.name) \(Theme.bytes($0.bytes))" }.joined())
     }
 
     private func mark(_ pct: Int, _ color: Color, _ w: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: 1).fill(color)
             .frame(width: 2, height: height + 6)
             .offset(x: w * (1 - Double(pct) / 100) - 1)
+    }
+}
+
+/// Dot + name + size for each part of the bar, then free space.
+struct SpaceLegend: View {
+    let parts: [SpacePart]
+    let free: Int64
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)], alignment: .leading, spacing: 6) {
+            ForEach(parts) { item($0.color, $0.name, $0.bytes) }
+            item(Theme.track, "Free", free)
+        }
+        .font(.system(size: 12))
+    }
+
+    private func item(_ color: Color, _ name: String, _ bytes: Int64) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 8, height: 8)
+            Text(name).foregroundStyle(Theme.soft)
+            Text(Theme.bytes(bytes)).font(Theme.mono(11, .regular)).foregroundStyle(Theme.tertiary)
+        }
+        .lineLimit(1)
     }
 }
 

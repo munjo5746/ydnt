@@ -30,4 +30,21 @@ final class TreemapTests: XCTestCase {
         XCTAssertFalse(a.isInside(b))
         XCTAssertFalse(URL(fileURLWithPath: "/a/bc").isInside(a))
     }
+
+    @MainActor func testSpacePartsSkipLargeFilesAndFitUsedSpace() {
+        let scan = ScanModel()
+        func r(_ c: YouDontNeedThat.Category, _ bytes: Int64) -> CategoryResult {
+            CategoryResult(category: c, status: .scanned, items: [ScanItem(url: URL(fileURLWithPath: "/x/\(c.rawValue)"), bytes: bytes)])
+        }
+        scan.results = [.homeFolder: r(.homeFolder, 300), .largeFiles: r(.largeFiles, 500), .caches: r(.caches, 100)]
+        let parts = SpacePart.usage(scan, DiskSpace(available: 100, total: 1000))
+        XCTAssertEqual(parts.map(\.name), ["Home Folder", "Caches", "Other"])
+        XCTAssertEqual(parts.map(\.bytes), [300, 100, 500])   // Other = used 900 - scanned 400
+        XCTAssertEqual(parts.reduce(0) { $0 + $1.fraction }, 0.9, accuracy: 1e-9)
+
+        // Scans bigger than "used": scaled down, Other is empty.
+        scan.results = [.homeFolder: r(.homeFolder, 1200), .caches: r(.caches, 600)]
+        let squeezed = SpacePart.usage(scan, DiskSpace(available: 100, total: 1000))
+        XCTAssertEqual(squeezed.map(\.bytes), [600, 300, 0])
+    }
 }

@@ -55,7 +55,7 @@ struct MenuBarPanel: View {
                 Spacer()
                 Text("of \(Theme.bytes(d.total)) · Macintosh HD").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
             }
-            SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent)
+            SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent, parts: SpacePart.usage(scan, d))
             HStack(spacing: 14) {
                 MarkerLegend(color: Theme.amber, text: "Starts below \(s.thresholdPercent)% (\(Theme.bytes(d.total * Int64(s.thresholdPercent) / 100)))")
                 MarkerLegend(color: Theme.text, text: "Stops at \(s.stopPercent)%")
