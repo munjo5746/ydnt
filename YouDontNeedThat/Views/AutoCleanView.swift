@@ -37,9 +37,10 @@ struct AutoCleanView: View {
 
     private var hero: some View {
         @Bindable var cleaner = cleaner
-        // Text and markers follow the settings the current result was computed with, not the live sliders,
-        // so headline and helper text always agree. The sliders show their own live numbers.
+        // Headline and helper text follow the settings the current result was computed with, so they always agree.
+        // The bar markers and legend follow the live sliders, for instant feedback while dragging.
         let s = cleaner.checkedSettings
+        let live = cleaner.settings
         let free = cleaner.disk?.free ?? 1
         let busy = cleaner.rechecking
         let (kicker, color, headline, detail): (String, Color, String, String) = {
@@ -88,15 +89,15 @@ struct AutoCleanView: View {
             }
             if let d = cleaner.disk {
                 VStack(alignment: .leading, spacing: 8) {
-                    SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent, height: 14)
+                    SpaceBar(free: d.free, start: live.thresholdPercent, stop: live.stopPercent, height: 14)
                     HStack(spacing: 18) {
                         Text("\(Theme.bytes(d.available)) free of \(Theme.bytes(d.total)) (\(CleanState.pct(d.free)))")
-                        MarkerLegend(color: Theme.amber, text: "Starts below \(s.thresholdPercent)%")
-                        MarkerLegend(color: Theme.text, text: "Stops at \(s.stopPercent)%")
+                        MarkerLegend(color: Theme.amber, text: "Starts below \(live.thresholdPercent)%")
+                        MarkerLegend(color: Theme.text, text: "Stops at \(live.stopPercent)%")
                     }
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 }
-                .animation(.easeInOut(duration: 0.3), value: s)
+                .animation(.easeOut(duration: 0.12), value: live)   // short: keeps up with a drag
             }
             // Always here, so nothing below jumps as the plan comes and goes; disabled when there's nothing to clean.
             HStack(spacing: 10) {
