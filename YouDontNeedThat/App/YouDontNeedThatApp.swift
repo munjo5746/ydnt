@@ -15,7 +15,7 @@ struct YouDontNeedThatApp: App {
         MenuBarExtra {
             MenuBarPanel().environment(delegate.cleaner).environment(delegate.scan)
         } label: {
-            Image(nsImage: .menuBarIcon(dot: delegate.cleaner.state.alert && delegate.cleaner.settings.enabled,
+            Image(nsImage: .menuBarIcon(dot: delegate.cleaner.lowSpace && delegate.cleaner.settings.enabled,
                                         dim: !delegate.cleaner.settings.enabled))
                 .accessibilityLabel(delegate.cleaner.state.detail)
         }

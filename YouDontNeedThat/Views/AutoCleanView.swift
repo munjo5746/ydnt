@@ -37,7 +37,7 @@ struct AutoCleanView: View {
     // MARK: Hero
 
     /// The longest helper text the card can show, with worst-case numbers.
-    private static let longestDetail = "At the next check (within 10 minutes) it deletes 999 old items, freeing 999.99 GB. Or clean now."
+    private static let longestDetail = "At the next check (tomorrow 12:00 PM) it deletes 999 old items, freeing 999.99 GB. Or clean now."
 
     private var hero: some View {
         @Bindable var cleaner = cleaner
@@ -55,7 +55,7 @@ struct AutoCleanView: View {
                         "It can free \(Theme.bytes(b)) by deleting \(Theme.plural(n, "old item")) and get you back toward \(s.stopPercent)%.")
             case .waiting(_, let b, let n):
                 return ("Cleaning soon", Theme.amber, "You're under \(s.thresholdPercent)% free",
-                        "At the next check (within 10 minutes) it deletes \(Theme.plural(n, "old item")), freeing \(Theme.bytes(b)). Or clean now.")
+                        "At the next check (\(Self.when(cleaner.nextCheck))) it deletes \(Theme.plural(n, "old item")), freeing \(Theme.bytes(b)). Or clean now.")
             case .stuck:
                 return ("Stuck", Theme.amber, "You're under \(s.thresholdPercent)% free",
                         "Nothing in your folders is old enough to delete. Add folders below.")
@@ -109,6 +109,7 @@ struct AutoCleanView: View {
                     }
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     if !parts.isEmpty { SpaceLegend(parts: parts, free: d.available).padding(.top, 2) }
+                    scheduleLine
                 }
                 .animation(.easeOut(duration: 0.12), value: live)   // short: keeps up with a drag
             }
@@ -151,6 +152,40 @@ struct AutoCleanView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(color == Theme.amber ? Color(hex: 0x5C4A26) : Color(hex: 0x2E3035)))
     }
 
+    /// "Last checked 12 min ago · Next check at 3:40 PM". Re-renders each minute so "due now" shows up.
+    private var scheduleLine: some View {
+        TimelineView(.everyMinute) { _ in
+            HStack(spacing: 6) {
+                Image(systemName: "clock").font(.system(size: 11))
+                if !cleaner.settings.enabled {
+                    Text("Paused. No checks until you turn it back on.")
+                } else {
+                    if let last = cleaner.lastCheck {
+                        Text("Last checked \(Text(last, style: .relative)) ago ·")
+                    }
+                    Text(cleaner.nextCheck <= .now ? "Next check any moment" : "Next check \(Self.when(cleaner.nextCheck))")
+                }
+            }
+            .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+        }
+    }
+
+    static func interval(_ minutes: Int) -> String {
+        switch minutes {
+        case 1440: "Once a day"
+        case let m where m % 60 == 0: m == 60 ? "1 hour" : "\(m / 60) hours"
+        default: "\(minutes) min"
+        }
+    }
+
+    /// "3:40 PM", "tomorrow 9:12 AM", or a date further out.
+    static func when(_ d: Date, now: Date = .now) -> String {
+        let time = d.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDate(d, inSameDayAs: now) { return time }
+        if Calendar.current.isDateInTomorrow(d) { return "tomorrow \(time)" }
+        return d.formatted(date: .abbreviated, time: .shortened)
+    }
+
     // MARK: Settings
 
     private var whenToClean: some View {
@@ -168,6 +203,12 @@ struct AutoCleanView: View {
                 get: { Double(cleaner.settings.stopPercent) },
                 set: { cleaner.settings.stopPercent = max(Int($0), cleaner.settings.thresholdPercent + 1) }),
                    range: 4...40, tint: Theme.text, total: total)
+            HStack(spacing: 16) {
+                Text("Check every").foregroundStyle(Theme.soft).frame(width: 260, alignment: .leading)
+                ForEach(AutoCleanSettings.checkChoices, id: \.self) { m in
+                    Chip(label: Self.interval(m), on: cleaner.settings.checkMinutes == m) { cleaner.settings.checkMinutes = m }
+                }
+            }
             HStack(spacing: 16) {
                 Text("When it's time").foregroundStyle(Theme.soft).frame(width: 260, alignment: .leading)
                 Chip(label: "Ask me first", on: cleaner.settings.askFirst) { cleaner.settings.askFirst = true }

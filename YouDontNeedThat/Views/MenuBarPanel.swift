@@ -34,7 +34,7 @@ struct MenuBarPanel: View {
     private var header: some View {
         let (pill, fg, bg): (String, Color, Color) =
             !cleaner.settings.enabled ? ("Paused", Theme.soft, Color(hex: 0x2E3035))
-            : cleaner.state.alert ? ("Low space", Theme.amber, Color(hex: 0x3A2F17))
+            : cleaner.lowSpace ? ("Low space", Theme.amber, Color(hex: 0x3A2F17))
             : ("Watching", Theme.accent, Color(hex: 0x2B3319))
         return HStack(spacing: 10) {
             LogoMark(size: 28, plate: Color(hex: 0x2A2C31))

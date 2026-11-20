@@ -57,7 +57,7 @@ struct Sidebar: View {
         let s = cleaner.settings.enabled
         let (label, fg, bg): (String, Color, Color) =
             !s ? ("Off", Theme.secondary, Theme.track)
-            : cleaner.state.alert ? ("Low", Theme.amber, Color(hex: 0x3A2F17))
+            : cleaner.lowSpace ? ("Low", Theme.amber, Color(hex: 0x3A2F17))
             : ("On", Theme.accent, Theme.accent.opacity(0.16))
         return Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(fg)
             .padding(.horizontal, 7).padding(.vertical, 2).background(bg, in: Capsule())

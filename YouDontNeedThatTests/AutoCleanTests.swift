@@ -139,6 +139,37 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertTrue(AutoCleaner.photoLibraries.contains(lib.url.pathExtension.lowercased()))
     }
 
+    func testNextCheck() {
+        XCTAssertEqual(AutoCleaner.nextCheck(last: nil, minutes: 60, now: now), now)                 // never checked: now
+        let last = now.addingTimeInterval(-50 * 60)
+        XCTAssertEqual(AutoCleaner.nextCheck(last: last, minutes: 60, now: now), now.addingTimeInterval(10 * 60))
+        XCTAssertLessThan(AutoCleaner.nextCheck(last: last, minutes: 15, now: now), now)              // shortened: overdue
+        XCTAssertEqual(AutoCleaner.nextCheck(last: now.addingTimeInterval(3600), minutes: 60, now: now), now)  // clock went back
+        XCTAssertEqual(AutoCleanView.interval(15), "15 min")
+        XCTAssertEqual(AutoCleanView.interval(360), "6 hours")
+        XCTAssertEqual(AutoCleanView.interval(1440), "Once a day")
+    }
+
+    /// The schedule only checks when due, and remembers the last check across relaunches.
+    @MainActor func testTickRespectsScheduleAndPersists() async throws {
+        let suite = "ydnt-test-\(UUID())"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let defaults = UserDefaults(suiteName: suite)!
+        let file = FileManager.default.temporaryDirectory.appending(path: "ydnt-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let c = AutoCleaner(history: History(file: file), defaults: defaults, poll: false)
+        c.settings.thresholdPercent = 1          // never low on a test machine: checks are no-ops
+        c.settings.stopPercent = 2
+        XCTAssertNil(c.lastCheck)
+        await c.tickOnce()                        // first ever: due
+        let first = try XCTUnwrap(c.lastCheck)
+        await c.tickOnce()                        // within the hour: not due
+        XCTAssertEqual(c.lastCheck, first)
+        XCTAssertEqual(c.nextCheck.timeIntervalSince(first), 3600, accuracy: 1)
+        let again = AutoCleaner(history: History(file: file), defaults: defaults, poll: false)
+        XCTAssertEqual(try XCTUnwrap(again.lastCheck).timeIntervalSince1970, first.timeIntervalSince1970, accuracy: 0.001)
+    }
+
     func testOldSettingsDecodeWithDefaults() throws {
         let old = #"{"enabled":false,"thresholdPercent":20,"folders":[{"path":"/w"}]}"#
         let s = try JSONDecoder().decode(AutoCleanSettings.self, from: Data(old.utf8))
@@ -146,6 +177,7 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertEqual(s.thresholdPercent, 20)
         XCTAssertEqual(s.stopPercent, 25)
         XCTAssertFalse(s.askFirst)
+        XCTAssertEqual(s.checkMinutes, 60)
         XCTAssertEqual(s.folders, [WatchedFolder(path: "/w", enabled: true)])
     }
 

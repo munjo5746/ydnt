@@ -26,7 +26,10 @@ struct AutoCleanSettings: Codable, Equatable {
     var thresholdPercent = 10   // starts when free space drops below this
     var stopPercent = 15        // and deletes until it's back at this
     var askFirst = false        // true: wait for an OK from the menu bar or the notification
+    var checkMinutes = 60       // how often it checks (and, when low, cleans or asks)
     var folders: [WatchedFolder] = []
+
+    static let checkChoices = [15, 60, 360, 1440]
 
     init() {}
 
@@ -37,6 +40,7 @@ struct AutoCleanSettings: Codable, Equatable {
         thresholdPercent = try c.decodeIfPresent(Int.self, forKey: .thresholdPercent) ?? 10
         stopPercent = try c.decodeIfPresent(Int.self, forKey: .stopPercent) ?? max(15, thresholdPercent + 5)
         askFirst = try c.decodeIfPresent(Bool.self, forKey: .askFirst) ?? false
+        checkMinutes = try c.decodeIfPresent(Int.self, forKey: .checkMinutes) ?? 60
         folders = try c.decodeIfPresent([WatchedFolder].self, forKey: .folders) ?? []
     }
 }
@@ -86,7 +90,7 @@ enum CleanState: Equatable {
 
     var detail: String {
         switch self {
-        case .idle: "Plenty of space. Checking every 10 minutes."
+        case .idle: "Plenty of space."
         case .paused: "Auto-clean is paused."
         case .planning: "Space is low. Picking the oldest files in your watched folders…"
         case .low(let f): "Only \(Self.pct(f)) free. Starting cleanup."
@@ -110,6 +114,13 @@ final class AutoCleaner {
     private(set) var pending: [Pick] = []   // plan waiting for an OK (ask-first) or the next check (just-do-it)
     private(set) var rechecking = false     // settings changed; a plan-only check is pending or running
     private(set) var checkedSettings = AutoCleanSettings()   // what `state` was computed with
+    /// Last scheduled check (or Clean now). Persisted so a relaunch keeps the schedule.
+    private(set) var lastCheck: Date? {
+        didSet { defaults.set(lastCheck?.timeIntervalSince1970, forKey: Self.lastCheckKey) }
+    }
+    var nextCheck: Date { Self.nextCheck(last: lastCheck, minutes: settings.checkMinutes, now: .now) }
+    /// Below the start threshold right now, from the live free-space reading, not just as of the last check.
+    var lowSpace: Bool { state.alert || (disk.map { $0.need(percent: settings.thresholdPercent) > 0 } ?? false) }
     let history: History
 
     private var running = false
@@ -121,6 +132,10 @@ final class AutoCleaner {
     private var loop: Task<Void, Never>?
     private static let key = "autoClean"
     private static let skipKey = "autoCleanSkip"
+    private static let lastCheckKey = "autoCleanLastCheck"
+    /// How often the schedule wakes up: refreshes free space (cheap) and runs a check if one is due.
+    /// Task.sleep keeps counting while the Mac sleeps, so a check that came due during sleep runs within a tick of waking.
+    static let tick = Duration.seconds(60)
     /// Paths macOS refused to delete. Skipped by later runs instead of failing every time.
     var skip: Set<String> {
         get { Set(defaults.stringArray(forKey: Self.skipKey) ?? []) }
@@ -129,22 +144,39 @@ final class AutoCleaner {
 
     private let defaults: UserDefaults
 
-    /// `poll: false` skips the 10-minute loop (tests).
+    /// `poll: false` skips the schedule loop (tests).
     init(history: History = History(), defaults: UserDefaults = .standard, poll: Bool = true) {
         self.history = history
         self.defaults = defaults
         settings = defaults.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode(AutoCleanSettings.self, from: $0) } ?? AutoCleanSettings()
+        lastCheck = (defaults.object(forKey: Self.lastCheckKey) as? Double).map(Date.init(timeIntervalSince1970:))
         checkedSettings = settings
         if !settings.enabled { state = .paused }
-        // ponytail: fixed 10-minute poll; no wake-from-sleep hook, the next tick catches up.
         guard poll else { return }
         loop = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.check()
-                try? await Task.sleep(for: .seconds(600))
+                await self?.tickOnce()
+                try? await Task.sleep(for: Self.tick)
             }
         }
+    }
+
+    /// One beat of the schedule: keep the status fresh, and check if it's time.
+    func tickOnce() async {
+        refreshDisk()
+        if settings.enabled, Self.nextCheck(last: lastCheck, minutes: settings.checkMinutes, now: .now) <= .now {
+            await check()
+        } else if !running, let disk, disk.need(percent: settings.thresholdPercent) <= 0, state.alert {
+            state = settings.enabled ? .idle : .paused   // space came back on its own (or by hand)
+            pending = []
+        }
+    }
+
+    /// When the next scheduled check is due: `minutes` after the last one, or now if there never was one.
+    nonisolated static func nextCheck(last: Date?, minutes: Int, now: Date) -> Date {
+        guard let last, last <= now else { return now }   // never checked, or the clock went backwards
+        return last.addingTimeInterval(Double(minutes) * 60)
     }
 
     func refreshDisk() { disk = DiskSpace.current() }
@@ -155,6 +187,7 @@ final class AutoCleaner {
         refreshDisk()
         guard !running, settings.enabled || force, let disk else { return }
         checkedSettings = settings
+        if !planOnly { lastCheck = .now }
         guard disk.need(percent: settings.thresholdPercent) > 0 else {
             pending = []
             if case .freed = state {} else { state = settings.enabled ? .idle : .paused }
@@ -264,6 +297,7 @@ final class AutoCleaner {
 
     private func settingsChanged(from old: AutoCleanSettings) {
         if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: Self.key) }
+        // The interval only moves the next check (the loop reads it each tick); it never re-plans or deletes.
         guard settings.enabled != old.enabled || settings.thresholdPercent != old.thresholdPercent
             || settings.stopPercent != old.stopPercent || settings.askFirst != old.askFirst
             || settings.folders != old.folders else { return }
