@@ -332,7 +332,7 @@ final class AutoCleaner {
     // MARK: Ask-first notification
 
     nonisolated static let cleanAction = "clean"
-    private static let lowCategory = "low"
+    nonisolated private static let lowCategory = "low"
 
     static func registerNotifications() {
         let clean = UNNotificationAction(identifier: cleanAction, title: "Clean now")
@@ -341,14 +341,14 @@ final class AutoCleaner {
     }
 
     private static func notifyLow(free: Double, bytes: Int64, count: Int) {
-        let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { ok, _ in
+        // The reply comes on a background thread: build the request there from plain values, nothing main-actor.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { ok, _ in
             guard ok else { return }
             let content = UNMutableNotificationContent()
             content.title = "Only \(CleanState.pct(free)) free"
             content.body = "\(Theme.plural(count, "old item")) in your watched folders can go, freeing \(Theme.bytes(bytes))."
             content.categoryIdentifier = lowCategory
-            center.add(UNNotificationRequest(identifier: lowCategory, content: content, trigger: nil))
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: lowCategory, content: content, trigger: nil))
         }
     }
 
