@@ -13,7 +13,7 @@ struct AutoCleanView: View {
             HStack { Text("Auto-clean").fontWeight(.semibold); Spacer() }
                 .padding(.horizontal, 28).frame(minHeight: 54)
                 .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
-            ScrollView {
+            StableScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     hero
                     whenToClean
@@ -23,7 +23,6 @@ struct AutoCleanView: View {
                 .frame(maxWidth: 860, alignment: .leading)
                 .padding(EdgeInsets(top: 24, leading: 28, bottom: 32, trailing: 28))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .pinnedScrollBar()
             }
         }
         .task(id: cleaner.settings.folders) { await measure() }

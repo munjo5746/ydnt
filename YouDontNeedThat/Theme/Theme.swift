@@ -386,23 +386,22 @@ struct BrandLockup: View {
 
 // MARK: Scroll bars
 
-/// With a mouse attached, macOS uses scroll bars that take up width, and only while content overflows,
-/// so the layout shifts as content grows past the window or shrinks back. This keeps the track always shown
-/// (constant width). Floating trackpad scroll bars take no width either way and are unaffected.
-private struct PinnedScrollBar: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { Probe() }
-    func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.pin() }
+/// A vertical ScrollView whose content is always laid out one scroll bar narrower than the view, leaving a fixed
+/// gutter on the right. With a mouse attached, macOS scroll bars take up width only while content overflows; this
+/// way the bar shows and hides inside the gutter and nothing shifts. Trackpad (overlay) scroll bars need no gutter.
+struct StableScrollView<Content: View>: View {
+    @ViewBuilder let content: Content
 
-    final class Probe: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            pin()
+    // ponytail: read per render; switching mouse/trackpad mid-session fixes itself on the next layout.
+    private var gutter: CGFloat { NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle) }
+
+    var body: some View {
+        GeometryReader { g in
+            ScrollView {
+                content
+                    .frame(width: max(0, g.size.width - gutter), alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        func pin() { enclosingScrollView?.autohidesScrollers = false }
     }
-}
-
-extension View {
-    /// Put on a ScrollView's content.
-    func pinnedScrollBar() -> some View { background(PinnedScrollBar()) }
 }

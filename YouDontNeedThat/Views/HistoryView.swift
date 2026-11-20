@@ -28,7 +28,7 @@ struct HistoryView: View {
             HStack { Text("History").fontWeight(.semibold); Spacer() }
                 .padding(.horizontal, 28).frame(minHeight: 54)
                 .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
-            ScrollView {
+            StableScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     HStack(spacing: 10) {
                         stat("Cleaned in total", Theme.bytes(all.reduce(0) { $0 + $1.freed }), Theme.accent)
@@ -48,7 +48,6 @@ struct HistoryView: View {
                     }
                 }
                 .padding(24).padding(.horizontal, 4)
-                .pinnedScrollBar()
             }
             HStack(spacing: 12) {
                 Text("History is kept for \(History.keepDays) days.").foregroundStyle(Theme.tertiary)

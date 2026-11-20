@@ -21,7 +21,7 @@ struct ConfirmSheet: View {
             }
             .padding(EdgeInsets(top: 22, leading: 24, bottom: 14, trailing: 24))
 
-            ScrollView {
+            StableScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(items) { item in
                         HStack(spacing: 10) {
@@ -41,7 +41,6 @@ struct ConfirmSheet: View {
                     }
                 }
                 .padding(EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 12))
-                .pinnedScrollBar()
             }
             .frame(maxHeight: 220)
             .overlay(alignment: .top) { Theme.track.frame(height: 1) }

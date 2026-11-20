@@ -92,7 +92,7 @@ struct RootView: View {
     private var cleanScreen: some View {
         VStack(spacing: 0) {
             cleanHeader
-            ScrollView {
+            StableScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     titleRow
                     level
@@ -100,7 +100,6 @@ struct RootView: View {
                         .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
                 }
                 .padding(EdgeInsets(top: 24, leading: 28, bottom: 16, trailing: 28))
-                .pinnedScrollBar()
             }
             basketBar
         }
