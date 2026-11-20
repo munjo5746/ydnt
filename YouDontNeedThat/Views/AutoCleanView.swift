@@ -36,6 +36,9 @@ struct AutoCleanView: View {
 
     // MARK: Hero
 
+    /// The longest helper text the card can show, with worst-case numbers.
+    private static let longestDetail = "At the next check (within 10 minutes) it deletes 999 old items, freeing 999.99 GB. Or clean now."
+
     private var hero: some View {
         @Bindable var cleaner = cleaner
         // Headline and helper text follow the settings the current result was computed with, so they always agree.
@@ -77,8 +80,14 @@ struct AutoCleanView: View {
                     }
                     Group {
                         Text(headline).font(.system(size: 24, weight: .bold)).tracking(-0.4)
-                        Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft)
-                            .lineLimit(2, reservesSpace: true)   // same height whatever the message
+                        // Sized by the longest message at this width (hidden), so the card never jumps
+                        // and there's no empty line when everything fits on one.
+                        ZStack(alignment: .topLeading) {
+                            Text(Self.longestDetail).hidden().accessibilityHidden(true)
+                            Text(detail).foregroundStyle(Theme.soft)
+                        }
+                        .font(.system(size: 14))
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                     .opacity(busy ? 0.4 : 1)
                 }
@@ -90,15 +99,16 @@ struct AutoCleanView: View {
             }
             if let d = cleaner.disk {
                 let parts = SpacePart.usage(scan, d)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 12) {
                     SpaceBar(free: d.free, start: live.thresholdPercent, stop: live.stopPercent, height: 14, parts: parts)
+                        .padding(.top, -6)   // the pin heads already add room above
                     HStack(spacing: 18) {
                         Text("\(Theme.bytes(d.available)) free of \(Theme.bytes(d.total)) (\(CleanState.pct(d.free)))")
                         MarkerLegend(color: Theme.amber, text: "Starts below \(live.thresholdPercent)%")
                         MarkerLegend(color: Theme.text, text: "Stops at \(live.stopPercent)%")
                     }
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                    if !parts.isEmpty { SpaceLegend(parts: parts, free: d.available).padding(.top, 4) }
+                    if !parts.isEmpty { SpaceLegend(parts: parts, free: d.available).padding(.top, 2) }
                 }
                 .animation(.easeOut(duration: 0.12), value: live)   // short: keeps up with a drag
             }
