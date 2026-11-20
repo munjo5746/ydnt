@@ -222,7 +222,7 @@ struct AutoCleanView: View {
         let e = eligible[folder.path]
         return HStack(spacing: 0) {
             Toggle("Clean \(folder.name)", isOn: f.enabled).toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Theme.accent)
-                .frame(width: 56)
+                .padding(.leading, 14).padding(.trailing, 16)   // breathing room before the folder name
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 3).fill(tint).frame(width: 10, height: 10)
