@@ -2,44 +2,69 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AutoCleaner.self) private var cleaner
-    @State private var model = ScanModel()
+    @Environment(ScanModel.self) private var model
     @State private var open: Category?
     @State private var path: [URL] = []                      // folders opened inside `open`, outermost first
     @State private var folders: [URL: CategoryResult] = [:]  // contents of opened folders
-    @State private var hovered: String?
-    @State private var basket: [ScanItem: Category] = [:]   // queued for deletion, across all categories
+    @State private var basket: [ScanItem: Category] = [:]   // picked for clean-up, across all categories
     @State private var errorMessage: String?
-    @State private var screen = Screen.chart
+    @State private var screen = Screen.clean
     @State private var deleting = false
-    @State private var confirmDelete = false
+    @State private var reviewing = false
+    @State private var trashMode = true
+    @State private var confirmEmpty = false
+    @State private var toast: Toast?
+
+    struct Toast: Equatable {
+        var text: String
+        var undoRun: UUID? = nil
+        var rescan: Set<Category> = []
+        var canEmpty = false
+    }
+
+    /// One tile + one row: a category at the top level, an item inside one.
+    private struct Entry: Identifiable {
+        let id: String
+        let name: String
+        let path: String
+        let bytes: Int64
+        let color: Color
+        let shade: Double       // 0 = full category color
+        let modified: Date?
+        var meta = ""
+        var tag: String? = nil
+        let isFolder: Bool
+        let selectable: Bool
+        var category: Category? = nil
+        var item: ScanItem? = nil
+    }
 
     private var openResult: CategoryResult? { path.last.map { folders[$0] } ?? open.flatMap { model.results[$0] } }
-    private var here: (name: String, path: String)? {
-        path.last.map { ($0.lastPathComponent, $0.abbreviatedPath) } ?? open.map { ($0.name, $0.displayPath) }
-    }
-    private var scanning: Bool { path.isEmpty ? model.isScanning : openResult?.status != .scanned }
-    private var slices: [Slice] { openResult.map(Slice.items) ?? Slice.categories(model.results) }
-    private var total: Int64 { slices.reduce(0) { $0 + $1.bytes } }
-    private var focused: Slice? { slices.first { $0.id == hovered } }
     private var basketBytes: Int64 { basket.keys.reduce(0) { $0 + $1.bytes } }
-    private func queued(_ id: String) -> Bool { basket.keys.contains { $0.id == id } }
+    private var basketPlaces: [String] {
+        basket.sorted { $0.key.bytes > $1.key.bytes }.map(\.value.name).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            titleBar
+        HStack(spacing: 0) {
+            Sidebar(screen: screen, go: go, emptyTrash: { confirmEmpty = true })
             Group {
                 switch screen {
-                case .chart: level.id(open)
-                case .deleteList: deleteList
+                case .clean: cleanScreen
                 case .autoClean: AutoCleanView()
-                case .history(let run): HistoryView(runID: run) { go(.history(run: $0)) }
+                case .history(let run): HistoryView(expand: run)
                 }
             }
-            .transition(.opacity)
-            footer
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onChange(of: basket.isEmpty) { _, empty in if empty, screen == .deleteList { screen = .chart } }
-        .onChange(of: cleaner.autoRuns) { model.scanAll(); folders = [:]; path.last.map(load) }
+        .ignoresSafeArea(edges: .top)
+        .overlay(alignment: .bottom) { toastView }
+        .sheet(isPresented: $reviewing) {
+            ConfirmSheet(items: basket.keys.sorted { $0.bytes > $1.bytes }, places: basketPlaces, free: cleaner.disk?.available,
+                         trash: $trashMode, keep: { basket[$0] = nil }, cancel: { reviewing = false }, confirm: clean)
+        }
+        .onChange(of: basket.isEmpty) { _, empty in if empty { reviewing = false } }
+        .onChange(of: cleaner.autoRuns) { model.scanAll(); folders = [:]; path.forEach(load) }
         .onChange(of: cleaner.pendingScreen, initial: true) { _, s in
             guard let s else { return }
             screen = s
@@ -47,256 +72,343 @@ struct RootView: View {
         }
         .onAppear { NSApp.setActivationPolicy(.regular) }       // Dock icon only while the window is open
         .onDisappear { NSApp.setActivationPolicy(.accessory) }
-        .confirmationDialog("Permanently delete \(basket.count) file\(basket.count == 1 ? "" : "s") (\(Theme.bytes(basketBytes)))?",
-                            isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { deleteAll() }
-        } message: { Text("This skips the Trash. There is no undo.") }
+        .confirmationDialog("Empty the Trash?", isPresented: $confirmEmpty, titleVisibility: .visible) {
+            Button("Empty Trash", role: .destructive) { emptyTrash() }
+        } message: { Text("Everything in the Trash is deleted for good. There is no undo.") }
         .background(Theme.window)
         .foregroundStyle(Theme.text)
+        .font(.system(size: 13))
         .preferredColorScheme(.dark)
-        .frame(minWidth: 980, minHeight: 680)
-        .task { model.scanAll() }
+        .frame(minWidth: 1000, minHeight: 700)
+        .task { if model.results.isEmpty { model.scanAll() } }
         .onExitCommand { goBack() }
         .alert("That didn't work", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK") {}
         } message: { Text(errorMessage ?? "") }
     }
 
-    // MARK: Sections
+    // MARK: Clean up
 
-    private var titleBar: some View {
-        HStack(spacing: 16) {
-            Text("You Don't Need That").font(.system(size: 14, weight: .bold))
-            Spacer()
-            HStack(spacing: 8) {
-                if !crumbs.isEmpty {
-                    Button { goBack() } label: { Label("Back", systemImage: "chevron.left") }
-                        .buttonStyle(OutlineButtonStyle())
-                        .keyboardShortcut("[", modifiers: .command)
-                        .controlSize(.small)
-                        .disabled(deleting)
-                    Text("All places").foregroundStyle(Theme.secondary)
-                    ForEach(crumbs.indices, id: \.self) { i in
-                        Text("/").foregroundStyle(Theme.secondary)
-                        Text(crumbs[i]).fontWeight(i == crumbs.count - 1 ? .medium : .regular)
-                            .foregroundStyle(i == crumbs.count - 1 ? Theme.text : Theme.secondary)
-                    }
-                } else {
-                    Text("All places").fontWeight(.medium)
+    private var cleanScreen: some View {
+        VStack(spacing: 0) {
+            cleanHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    titleRow
+                    level
+                        .id("\(open?.rawValue ?? "")/\(path.last?.path ?? "")")
+                        .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
                 }
+                .padding(EdgeInsets(top: 24, leading: 28, bottom: 16, trailing: 28))
             }
-            .font(.system(size: 13))
-            if screen == .chart {
-                HStack(spacing: 8) {
-                    Button("Auto-clean") { go(.autoClean) }
-                    Button("History") { go(.history(run: nil)) }
-                }
-                .buttonStyle(OutlineButtonStyle()).controlSize(.small).disabled(deleting)
-            }
+            basketBar
         }
-        .padding(.leading, 84)
-        .padding(.trailing, 20)
-        .frame(height: 52)
-        .background(Theme.titleBar)
+    }
+
+    private var cleanHeader: some View {
+        let crumbs = ["All places"] + (open.map { [$0.name] } ?? []) + path.map(\.lastPathComponent)
+        return HStack(spacing: 8) {
+            if open != nil {
+                Button { goBack() } label: { Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)) }
+                    .buttonStyle(OutlineButtonStyle()).keyboardShortcut("[", modifiers: .command)
+                    .accessibilityLabel("Back").disabled(deleting)
+            }
+            HStack(spacing: 2) {
+                ForEach(crumbs.indices, id: \.self) { i in
+                    if i > 0 { Text("›").foregroundStyle(Color(hex: 0x6E7178)).padding(.horizontal, 2) }
+                    if i == crumbs.count - 1 {
+                        Text(crumbs[i]).fontWeight(.semibold).padding(.horizontal, 8)
+                    } else {
+                        Button(crumbs[i]) { back(to: i) }.buttonStyle(GhostButtonStyle(tint: Theme.secondary, size: 30))
+                            .padding(.horizontal, 2).disabled(deleting)
+                    }
+                }
+            }
+            .lineLimit(1)
+            Spacer(minLength: 20)
+            if model.isScanning {
+                ProgressView().controlSize(.small)
+                Text("Judging your files…").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+            } else if let at = model.scannedAt {
+                Text("Scanned \(Text(at, style: .relative)) ago").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+            }
+            Button { model.scanAll(); folders = [:]; path.forEach(load) } label: {
+                Label("Rescan", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(OutlineButtonStyle()).disabled(deleting || model.isScanning)
+        }
+        .padding(.horizontal, 24).frame(minHeight: 54)
         .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
     }
 
-    private var level: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .bottom, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(here.map { scanning ? $0.name : "\($0.name): \(Theme.bytes(total))" } ?? "Where your space went")
-                        .font(.system(size: 34, weight: .bold)).tracking(-1)
-                    Text(here?.path ?? "Your home folder, scanned for clutter")
-                        .font(.system(size: 12)).monospaced().foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                HStack(spacing: 10) {
-                    if scanning {
-                        ProgressView().controlSize(.small)
-                        Text(openResult?.status == .needsAccess ? "Needs Full Disk Access" : "Judging your files…")
-                    } else {
-                        Text(open == nil ? "Click a slice to look inside." : "Click a folder to open it, ○ to select.")
-                        if open == nil {
-                            Button("Rescan") { model.scanAll() }.buttonStyle(OutlineButtonStyle()).controlSize(.small)
-                        }
-                    }
-                }
-                .font(.system(size: 13)).foregroundStyle(Theme.secondary)
-            }
-            .padding(EdgeInsets(top: 28, leading: 36, bottom: 0, trailing: 36))
-
-            HStack(alignment: .top, spacing: 32) {
-                DonutChartView(slices: slices, focused: focused?.id, hovered: $hovered, onTap: tapped) { centerLabel }
-                    .frame(width: 400, height: 400)
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(slices) { s in
-                            let item = item(s.id)
-                            LegendRow(slice: s, percent: percent(s.bytes), active: s.id == focused?.id,
-                                      queued: open != nil && queued(s.id), opens: item?.isDirectory == true,
-                                      onSelect: item.flatMap { i in i.isProtected ? nil : { toggle(i) } },
-                                      onHover: { hovered = $0 ? s.id : nil }, onTap: { tapped(s.id) })
-                        }
-                    }
-                }
-                .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
-            }
-            .padding(EdgeInsets(top: 24, leading: 36, bottom: 32, trailing: 36))
-        }
-    }
-
-    private var centerLabel: some View {
-        let (kicker, size, name, path): (String, String, String, String) = if let f = focused {
-            ("\(percent(f.bytes)) of \(here?.name ?? "total")", Theme.bytes(f.bytes), f.name, f.path)
-        } else if let h = here {
-            ("This directory", Theme.bytes(total), h.name, h.path)
+    private var titleRow: some View {
+        let (title, sub, big, caption): (String, String, Int64, String)
+        if let here = path.last {
+            let r = folders[here]
+            title = here.lastPathComponent; sub = here.abbreviatedPath
+            big = r?.bytes ?? 0; caption = itemsCaption(r?.items ?? [])
+        } else if let c = open {
+            let r = model.results[c]
+            title = c.name; sub = c.displayPath
+            big = r?.bytes ?? 0; caption = itemsCaption(r?.items ?? [])
         } else {
-            ("Reclaimable", Theme.bytes(total), "\(slices.filter { $0.bytes > 0 }.count) places", "~")
+            let places = Category.allCases.filter { !pickable($0).isEmpty }.count
+            title = "Where your space went"
+            sub = "Biggest first. Click a tile or row to look inside, tick what you don't need."
+            big = model.reclaimable; caption = "you could get back from \(Theme.plural(places, "place"))"
         }
-        return VStack(spacing: 4) {
-            Text(kicker.uppercased()).font(.system(size: 12)).tracking(1).foregroundStyle(Theme.secondary)
-            Text(size).font(.system(size: 30, weight: .semibold)).monospaced().foregroundStyle(Theme.accent)
-            Text(name).font(.system(size: 15, weight: .medium))
-            Text(path).font(.system(size: 10)).monospaced().foregroundStyle(Theme.tertiary).truncationMode(.middle)
-        }
-        .lineLimit(1)
-        .multilineTextAlignment(.center)
-    }
-
-    private var footer: some View {
-        FooterBar(note: footerNote) {
-            if open == nil, model.needsAccess {
-                Button("Grant Full Disk Access") { ScanModel.openFullDiskAccessSettings() }.buttonStyle(OutlineButtonStyle())
+        return HStack(alignment: .bottom, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.system(size: 28, weight: .bold)).tracking(-0.5)
+                Text(sub).foregroundStyle(Theme.secondary).truncationMode(.middle)
             }
-            switch screen {
-            case .deleteList:
-                if deleting { ProgressView().controlSize(.small) }
-                Button(deleting ? "Deleting…" : "Delete \(basket.count) file\(basket.count == 1 ? "" : "s")") { confirmDelete = true }
-                    .buttonStyle(AccentButtonStyle()).disabled(deleting)
-            case .autoClean:
-                Button("Run now") { Task { await cleaner.check(force: true) } }.buttonStyle(OutlineButtonStyle())
-            case .history(let run):
-                if run == nil, !cleaner.history.entries.isEmpty {
-                    Button("Clear history") { cleaner.history.clear() }.buttonStyle(OutlineButtonStyle())
-                }
-            case .chart:
-                if !basket.isEmpty {
-                    Button("Review delete list (\(basket.count))") { go(.deleteList) }.buttonStyle(AccentButtonStyle())
-                }
+            .lineLimit(1)
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Theme.bytes(big)).font(Theme.mono(28)).foregroundStyle(Theme.accent)
+                Text(caption).font(.system(size: 12)).foregroundStyle(Theme.tertiary)
             }
         }
     }
 
-    private var deleteList: some View {
-        let items = basket.keys.sorted { $0.bytes > $1.bytes }
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .bottom, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Delete list: \(Theme.bytes(basketBytes))").font(.system(size: 34, weight: .bold)).tracking(-1)
-                    Text("Nothing is deleted until you confirm. Remove anything you want to keep.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                HStack(spacing: 10) {
-                    Button("Show in Finder") { reveal() }.buttonStyle(OutlineButtonStyle())
-                    Button("Clear all") { basket = [:] }.buttonStyle(OutlineButtonStyle())
-                }
-                .controlSize(.small).disabled(deleting)
-            }
-            .padding(EdgeInsets(top: 28, leading: 36, bottom: 24, trailing: 36))
+    private func itemsCaption(_ items: [ScanItem]) -> String {
+        let prot = items.filter(\.isProtected).count
+        return Theme.plural(items.count, "item") + (prot > 0 ? " · \(prot) protected by macOS" : "")
+    }
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(items) { item in
-                        HStack(spacing: 14) {
-                            RoundedRectangle(cornerRadius: 3).fill(basket[item]?.color ?? Theme.secondary).frame(width: 12, height: 12)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.name).font(.system(size: 15, weight: .medium))
-                                Text(item.url.abbreviatedPath).font(.system(size: 11)).monospaced().foregroundStyle(Theme.tertiary)
-                            }
-                            Spacer(minLength: 8)
-                            Text(basket[item]?.name ?? "").font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                            Text(Theme.bytes(item.bytes)).font(.system(size: 15, weight: .semibold)).monospaced()
-                                .frame(minWidth: 90, alignment: .trailing)
-                            Button("Keep") { basket[item] = nil }.buttonStyle(OutlineButtonStyle()).controlSize(.small)
-                                .disabled(deleting).help("Remove from the delete list")
-                        }
-                        .lineLimit(1).truncationMode(.middle)
-                        .padding(.horizontal, 10).frame(minHeight: 56)
-                        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+    @ViewBuilder private var level: some View {
+        let entries = self.entries
+        VStack(alignment: .leading, spacing: 18) {
+            if !entries.isEmpty {
+                TreemapView(tiles: entries.map { e in
+                    let check = check(e)
+                    return TreemapTile(id: e.id, name: e.name, size: Theme.bytes(e.bytes), bytes: e.bytes, color: e.color,
+                                       darkInk: e.shade <= 0.3, selected: check == .on, locked: !e.selectable,
+                                       label: "\(e.name), \(Theme.bytes(e.bytes)). \(e.isFolder ? "Open" : e.selectable ? "Select" : "Protected")",
+                                       action: { tapped(e) })
+                })
+                .frame(height: 230)
+            }
+
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Text("Name").padding(.leading, 44).frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Last used").frame(width: 120, alignment: .leading)
+                    Text("Size").frame(width: 170, alignment: .trailing)
+                    Spacer().frame(width: 34)
+                }
+                .font(.system(size: 11, weight: .semibold)).tracking(0.5).textCase(.uppercase).foregroundStyle(Theme.tertiary)
+                .frame(minHeight: 32)
+                .overlay(alignment: .bottom) { Theme.track.frame(height: 1) }
+
+                let top = entries.first?.bytes ?? 1
+                ForEach(entries) { e in
+                    let check = check(e)
+                    ItemRow(name: e.name, path: e.path, bytes: e.bytes, barFraction: Double(e.bytes) / Double(max(top, 1)),
+                            color: e.color, modified: e.modified, meta: e.meta, tag: e.tag, isFolder: e.isFolder,
+                            check: check, selectable: e.selectable,
+                            checkLocked: e.item.map { inherited($0.url) } ?? false || deleting,
+                            onCheck: { toggle(e) }, onOpen: { tapped(e) })
+                }
+                levelFooter
+            }
+        }
+    }
+
+    /// Full Disk Access prompts, still-scanning and already-clean categories (top level), or this folder's state.
+    @ViewBuilder private var levelFooter: some View {
+        if open == nil {
+            ForEach(Category.allCases.filter { model.results[$0]?.status == .needsAccess }) { c in
+                HStack(spacing: 0) {
+                    Image(systemName: "lock").foregroundStyle(Color(hex: 0xE8B45A)).frame(width: 44)
+                        .accessibilityLabel("Needs access")
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(c.name).font(.system(size: 14, weight: .medium))
+                        Text("macOS needs your OK before we can look inside \(Text(c.displayPath).font(Theme.mono(11, .regular)))")
+                            .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
                     }
+                    Spacer()
+                    Button("Grant Full Disk Access…") { ScanModel.openFullDiskAccessSettings() }
+                        .buttonStyle(OutlineButtonStyle(tint: Theme.amber, stroke: Color(hex: 0x5C4A26))).padding(.trailing, 8)
                 }
+                .frame(minHeight: 56)
+                .overlay(alignment: .bottom) { Theme.rowDivider.frame(height: 1) }
             }
-            .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
-            .padding(EdgeInsets(top: 0, leading: 36, bottom: 32, trailing: 36))
+            let scanning = Category.allCases.filter { model.results[$0]?.status == .scanning }
+            if !scanning.isEmpty {
+                note("Still judging: " + scanning.map(\.name).joined(separator: ", "), spinner: true)
+            }
+            let empties = Category.allCases.filter { model.results[$0].map { $0.status == .scanned && $0.bytes == 0 } ?? false }
+            if !empties.isEmpty {
+                note("Already clean: " + empties.map(\.name).joined(separator: ", "), spinner: false)
+            }
+        } else if let r = openResult {
+            switch r.status {
+            case .scanning: note("Judging your files…", spinner: true)
+            case .needsAccess: note("macOS needs Full Disk Access before we can look inside.", spinner: false)
+            case .scanned: if r.items.isEmpty { note("Nothing in here.", spinner: false) }
+            }
         }
     }
 
-    /// Breadcrumb after "All places".
-    private var crumbs: [String] {
-        switch screen {
-        case .chart: open.map { [$0.name] + path.map(\.lastPathComponent) } ?? []
-        case .deleteList: ["Delete list"]
-        case .autoClean: ["Auto-clean"]
-        case .history(nil): ["History"]
-        case .history(let id?):
-            ["History", cleaner.history.runs.first { $0.id == id }?.date.formatted(date: .abbreviated, time: .shortened) ?? "Run"]
+    private func note(_ text: String, spinner: Bool) -> some View {
+        HStack(spacing: 10) {
+            if spinner { ProgressView().controlSize(.small) } else { Image(systemName: "checkmark") }
+            Text(text)
         }
+        .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+        .padding(.leading, 14).frame(minHeight: 48)
     }
 
-    private var footerNote: String {
-        if screen == .autoClean { return cleaner.state.detail }
-        if screen == .history(run: nil) {
-            let n = cleaner.history.runs.count
-            return "\(n) run\(n == 1 ? "" : "s") logged"
-        }
-        if case .history = screen { return "Deleted files skipped the Trash and can't be restored." }
-        if deleting { return "Deleting \(basket.count) item\(basket.count == 1 ? "" : "s")… big folders take a while." }
-        if !basket.isEmpty { return "\(basket.count) item\(basket.count == 1 ? "" : "s") · \(Theme.bytes(basketBytes)) on the delete list" }
-        if open == nil { return "Nothing is deleted until you say so." }
-        return "Nothing queued. Pick the slices you don't need."
-    }
-
-    // MARK: Actions
-
-    private func percent(_ b: Int64) -> String {
-        guard total > 0 else { return "" }
-        let pct = Double(b) / Double(total) * 100
-        return pct < 1 ? "<1%" : "\(Int(pct.rounded()))%"
-    }
-
-    private func item(_ id: String) -> ScanItem? {
-        open == nil ? nil : openResult?.items.first { $0.id == id }
-    }
-
-    private func toggle(_ item: ScanItem) {
-        guard let c = open, !item.isProtected else { return }
-        if basket.removeValue(forKey: item) == nil { basket[item] = c }
-    }
-
-    private func tapped(_ id: String) {
-        if open != nil {
-            guard let item = item(id) else { return }
-            if item.isDirectory {
-                withAnimation(.easeInOut(duration: 0.25)) { path.append(item.url); hovered = nil }
-                if folders[item.url] == nil { load(item.url) }
+    private var basketBar: some View {
+        HStack(spacing: 12) {
+            if basket.isEmpty {
+                Text("Tick what you don't need. Your picks stay here while you browse other folders.").foregroundStyle(Theme.secondary)
             } else {
-                toggle(item)
+                Text("\(basket.count)").fontWeight(.bold).foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 6).frame(minWidth: 28, minHeight: 28).background(Theme.accent, in: Capsule())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(Theme.plural(basket.count, "item")) · \(Theme.bytes(basketBytes))").fontWeight(.semibold)
+                    Text("From " + basketPlaces.joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                }
+                .lineLimit(1)
             }
-        } else if let c = Category(rawValue: id) {
-            if model.results[c]?.status == .needsAccess { ScanModel.openFullDiskAccessSettings(); return }
-            withAnimation(.easeInOut(duration: 0.25)) { open = c; hovered = nil }
+            Spacer(minLength: 20)
+            if deleting {
+                ProgressView().controlSize(.small)
+                Text("Cleaning \(Theme.plural(basket.count, "item"))… big folders take a while.").foregroundStyle(Theme.secondary)
+            } else if !basket.isEmpty {
+                Button("Clear") { basket = [:] }.buttonStyle(OutlineButtonStyle(height: 36))
+            }
+            Button("Review & clean…") { reviewing = true }
+                .buttonStyle(AccentButtonStyle()).disabled(basket.isEmpty || deleting)
+        }
+        .padding(.horizontal, 28).padding(.vertical, 14)
+        .background(Theme.bar)
+        .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+    }
+
+    @ViewBuilder private var toastView: some View {
+        if let t = toast {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.accent)
+                Text(t.text).lineLimit(2)
+                if let run = t.undoRun {
+                    Button("Undo") { undo(run, t.rescan) }.buttonStyle(OutlineButtonStyle(stroke: Color(hex: 0x4A4D55), height: 30))
+                }
+                if t.canEmpty, (model.results[.trash]?.bytes ?? 0) > 0 {
+                    Button("Empty Trash") { confirmEmpty = true }.buttonStyle(OutlineButtonStyle(stroke: Color(hex: 0x4A4D55), height: 30))
+                }
+                Button { toast = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+                    .buttonStyle(GhostButtonStyle(size: 30)).accessibilityLabel("Dismiss")
+            }
+            .padding(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 8))
+            .background(Theme.track, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(hex: 0x3C3F46)))
+            .shadow(color: .black.opacity(0.5), radius: 15, y: 12)
+            .padding(.leading, 220)       // centered on the content, not the sidebar
+            .padding(.bottom, 84)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityAddTraits(.updatesFrequently)
+        }
+    }
+
+    // MARK: Entries and picking
+
+    private var entries: [Entry] {
+        if let c = open {
+            return (openResult?.items ?? []).filter { $0.bytes > 0 }.enumerated().map { i, item in
+                let shade = min(0.62, Double(i) * 0.15)
+                return Entry(id: item.id, name: item.name, path: item.url.abbreviatedPath, bytes: item.bytes,
+                             color: c.color.opacity(1 - shade), shade: shade, modified: item.modified,
+                             meta: "", tag: item.isProtected ? "Protected by macOS" : nil,
+                             isFolder: item.isDirectory, selectable: !item.isProtected, item: item)
+            }
+        }
+        return Category.allCases.compactMap { c -> Entry? in
+            guard let r = model.results[c], r.status == .scanned, r.bytes > 0 else { return nil }
+            let prot = r.items.filter(\.isProtected).count
+            return Entry(id: c.rawValue, name: c.name, path: c.displayPath, bytes: r.bytes, color: c.color, shade: 0,
+                         modified: r.items.compactMap(\.modified).max(), meta: Theme.plural(r.items.count, "item"),
+                         tag: prot > 0 ? "\(prot) protected" : nil, isFolder: true, selectable: prot < r.items.count,
+                         category: c)
+        }
+        .sorted { $0.bytes > $1.bytes }
+    }
+
+    private func pickable(_ c: Category) -> [ScanItem] {
+        model.results[c].map { $0.status == .scanned ? $0.items.filter { !$0.isProtected } : [] } ?? []
+    }
+
+    /// On because a folder above it is picked.
+    private func inherited(_ url: URL) -> Bool { basket.keys.contains { url.isInside($0.url) } }
+
+    private func check(_ url: URL) -> Check {
+        if basket.keys.contains(where: { $0.url == url }) || inherited(url) { return .on }
+        return basket.keys.contains { $0.url.isInside(url) } ? .mixed : .off
+    }
+
+    private func check(_ e: Entry) -> Check {
+        if let item = e.item { return check(item.url) }
+        guard let c = e.category else { return .off }
+        let states = pickable(c).map { check($0.url) }
+        if !states.isEmpty, states.allSatisfy({ $0 == .on }) { return .on }
+        return states.contains { $0 != .off } ? .mixed : .off
+    }
+
+    /// Picks `item`, replacing anything already picked inside it.
+    private func pick(_ item: ScanItem, _ c: Category) {
+        for k in basket.keys where k.url.isInside(item.url) { basket[k] = nil }
+        basket[item] = c
+    }
+
+    private func toggle(_ e: Entry) {
+        guard !deleting else { return }
+        if let item = e.item, let c = open {
+            guard !item.isProtected, !inherited(item.url) else { return }
+            if basket[item] != nil { basket[item] = nil } else { pick(item, c) }
+        } else if let c = e.category {
+            let items = pickable(c)
+            if check(e) == .on {
+                for k in basket.keys where items.contains(where: { k.url == $0.url || k.url.isInside($0.url) }) { basket[k] = nil }
+            } else {
+                for i in items where check(i.url) != .on { pick(i, c) }
+            }
+        }
+    }
+
+    private func tapped(_ e: Entry) {
+        if let c = e.category {
+            withAnimation(.easeOut(duration: 0.3)) { open = c }
+        } else if let item = e.item {
+            if item.isDirectory {
+                withAnimation(.easeOut(duration: 0.3)) { path.append(item.url) }
+                if folders[item.url] == nil { load(item.url) }
+            } else if item.isProtected {
+                toast = Toast(text: "\(item.name) is protected by macOS, so it's always skipped.")
+            } else {
+                toggle(e)
+            }
+        }
+    }
+
+    // MARK: Navigation
+
+    private func go(_ s: Screen) {
+        toast = nil
+        withAnimation(.easeInOut(duration: 0.2)) { screen = s }
+    }
+
+    private func back(to crumb: Int) {
+        guard !deleting else { return }
+        withAnimation(.easeOut(duration: 0.3)) {
+            if crumb == 0 { open = nil; path = []; folders = [:] } else { path = Array(path.prefix(crumb - 1)) }
         }
     }
 
     private func goBack() {
-        guard !deleting else { return }
-        withAnimation(.easeInOut(duration: 0.25)) {
-            if case .history(_?) = screen { screen = .history(run: nil) } else if screen != .chart { screen = .chart }
-            else if !path.isEmpty { path.removeLast() } else { open = nil; folders = [:] }
-            hovered = nil
-        }
+        guard !deleting, screen == .clean, open != nil else { return }
+        back(to: path.count)
     }
 
     private func load(_ url: URL) {
@@ -305,30 +417,65 @@ struct RootView: View {
         Task { folders[url] = await Task.detached { DiskScanner.contents(of: url, in: c) }.value }
     }
 
-    private func go(_ s: Screen) {
-        withAnimation(.easeInOut(duration: 0.25)) { screen = s; hovered = nil }
+    // MARK: Actions
+
+    private func rescan(_ cats: Set<Category>) {
+        cats.forEach(model.rescan)
+        folders = [:]
+        path.forEach(load)
     }
 
-    private func reveal() {
-        NSWorkspace.shared.activateFileViewerSelecting(basket.keys.map(\.url))
-    }
-
-    private func deleteAll() {
-        let batch = basket
+    private func clean() {
+        let batch = basket, trash = trashMode
+        reviewing = false
         deleting = true
+        toast = nil
         Task {
-            let entries = await cleaner.delete(batch.map { Pick(item: $0.key, source: $0.value.name) }, auto: false)
+            let entries = await cleaner.delete(batch.map { Pick(item: $0.key, source: $0.value.name) }, auto: false, trash: trash)
             let failed = entries.filter { $0.error != nil }
             let failedPaths = Set(failed.map(\.path))
-            let done = batch.filter { !failedPaths.contains($0.key.url.path(percentEncoded: false)) }
+            let done = batch.filter { !failedPaths.contains($0.key.id) }
             for item in done.keys { basket[item] = nil }
-            Set(done.values).forEach(model.rescan)
-            folders = [:]
-            path.forEach(load)
+            let touched = Set(done.values).union(trash ? [.trash] : [])
+            rescan(touched)
             deleting = false
+            let bytes = Theme.bytes(done.keys.reduce(0) { $0 + $1.bytes })
+            if !done.isEmpty {
+                withAnimation {
+                    toast = trash
+                        ? Toast(text: "Moved \(Theme.plural(done.count, "item")) to the Trash. Empty it to get \(bytes) back.",
+                                undoRun: entries.first?.run, rescan: touched, canEmpty: true)
+                        : Toast(text: "Deleted \(Theme.plural(done.count, "item")). \(bytes) is yours again.")
+                }
+            }
             if !failed.isEmpty {
                 errorMessage = failed.map { "\($0.name): \($0.error ?? "")" }.sorted().joined(separator: "\n")
             }
         }
+    }
+
+    private func undo(_ run: UUID, _ cats: Set<Category>) {
+        Task {
+            let n = await cleaner.undoTrash(run: run)
+            rescan(cats)
+            toast = Toast(text: "Put back \(Theme.plural(n, "item")).")
+        }
+    }
+
+    private func emptyTrash() {
+        let bytes = model.results[.trash]?.bytes ?? 0
+        Task {
+            await cleaner.emptyTrash()
+            rescan([.trash])
+            toast = Toast(text: "Trash emptied. \(Theme.bytes(bytes)) is free space again.")
+        }
+    }
+}
+
+extension URL {
+    /// Strictly below `other` in the folder tree.
+    func isInside(_ other: URL) -> Bool {
+        let a = standardizedFileURL.pathComponents, b = other.standardizedFileURL.pathComponents
+        return a.count > b.count && a.starts(with: b)
     }
 }

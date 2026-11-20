@@ -4,9 +4,14 @@ struct ScanItem: Identifiable, Hashable, Sendable {
     let url: URL
     let bytes: Int64
     var isDirectory = false
+    var modified: Date? = nil
     var id: String { url.path(percentEncoded: false) }
     var name: String { url.lastPathComponent }
-    var isProtected: Bool { Category.protected.contains { $0.pathComponents == url.pathComponents } }
+    /// Never selectable: top-level home folders, and Apple's own caches (macOS refuses to delete those anyway).
+    var isProtected: Bool {
+        Category.protected.contains { $0.pathComponents == url.pathComponents }
+            || (name.hasPrefix("com.apple.") && url.deletingLastPathComponent().pathComponents == Category.cachesFolder.pathComponents)
+    }
 }
 
 struct CategoryResult: Sendable {
@@ -33,6 +38,9 @@ enum Fixtures {
 
     private static func r(_ c: Category, _ files: [(String, Double)]) -> CategoryResult {
         CategoryResult(category: c, status: .scanned,
-                       items: files.map { ScanItem(url: Category.home.appending(path: $0.0), bytes: Int64($0.1)) })
+                       items: files.enumerated().map { i, f in
+                           ScanItem(url: Category.home.appending(path: f.0), bytes: Int64(f.1),
+                                    modified: .now.addingTimeInterval(-Double(i * 97 + 2) * 86_400))
+                       })
     }
 }

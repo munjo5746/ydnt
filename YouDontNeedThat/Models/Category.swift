@@ -15,6 +15,8 @@ enum Category: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 
     static let home = FileManager.default.homeDirectoryForCurrentUser
+    static let cachesFolder = h("Library/Caches")
+    static let trashFolder = h(".Trash")
     private static func h(_ p: String) -> URL { home.appending(path: p) }
 
     /// Folders you can look inside but never queue for deletion.

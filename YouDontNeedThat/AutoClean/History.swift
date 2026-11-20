@@ -11,6 +11,7 @@ struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     let error: String?
     var freeBefore: Double? = nil   // disk free fraction around the run; same on every entry of a run
     var freeAfter: Double? = nil
+    var trashedTo: String? = nil    // set when it went to the Trash instead of being deleted
     var name: String { (path as NSString).lastPathComponent }
 }
 
@@ -19,7 +20,7 @@ struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
 final class History {
     private(set) var entries: [HistoryEntry]
     private let file: URL
-    private let cap: Int
+    static let keepDays = 90
 
     struct Run: Identifiable {
         let id: UUID
@@ -30,14 +31,20 @@ final class History {
         var succeeded: [HistoryEntry] { entries.filter { $0.error == nil } }
         var failures: [HistoryEntry] { entries.filter { $0.error != nil } }
         var failed: Int { failures.count }
+        var trashed: Bool { entries.contains { $0.trashedTo != nil } }
+        var places: [String] { entries.map(\.source).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
         var freeBefore: Double? { entries.first?.freeBefore }
         var freeAfter: Double? { entries.first?.freeAfter }
     }
 
-    init(file: URL = .applicationSupportDirectory.appending(path: "YouDontNeedThat/history.json"), cap: Int = 2000) {
+    init(file: URL = .applicationSupportDirectory.appending(path: "YouDontNeedThat/history.json")) {
         self.file = file
-        self.cap = cap
-        entries = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
+        entries = Self.recent((try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? [])
+    }
+
+    private static func recent(_ e: [HistoryEntry], now: Date = .now) -> [HistoryEntry] {
+        let cutoff = now.addingTimeInterval(-Double(keepDays) * 86_400)
+        return e.filter { $0.date >= cutoff }
     }
 
     /// Runs newest first; entries within a run in the order they were deleted.
@@ -53,8 +60,23 @@ final class History {
 
     func append(_ new: [HistoryEntry]) {
         guard !new.isEmpty else { return }
-        entries = Array((new.reversed() + entries).prefix(cap))
+        entries = Self.recent(new.reversed() + entries)
         save()
+    }
+
+    func remove(run: UUID) {
+        entries.removeAll { $0.run == run }
+        save()
+    }
+
+    /// One line per item, oldest first.
+    var csv: String {
+        func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        let rows = entries.reversed().map { e in
+            [e.date.ISO8601Format(), e.auto ? "auto" : "manual", e.trashedTo == nil ? "deleted" : "trashed",
+             q(e.source), q(e.path), String(e.bytes), q(e.error ?? "")].joined(separator: ",")
+        }
+        return (["date,by,method,place,path,bytes,error"] + rows).joined(separator: "\n") + "\n"
     }
 
     func clear() {

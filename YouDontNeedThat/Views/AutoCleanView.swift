@@ -3,74 +3,267 @@ import SwiftUI
 struct AutoCleanView: View {
     @Environment(AutoCleaner.self) private var cleaner
     @State private var refused: [String] = []
+    @State private var showPlan = false
+    @State private var eligible: [String: (count: Int, bytes: Int64)] = [:]   // by folder path
 
     var body: some View {
         @Bindable var cleaner = cleaner
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Auto-clean").font(.system(size: 34, weight: .bold)).tracking(-1)
-                Text("When free space drops below the threshold, the oldest items in these folders are permanently deleted, skipping the Trash, until it's back above.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.secondary)
-            }
-            .padding(EdgeInsets(top: 28, leading: 36, bottom: 24, trailing: 36))
-
-            VStack(alignment: .leading, spacing: 16) {
-                Toggle("Auto-clean on", isOn: $cleaner.settings.enabled)
-                Toggle("Open at login (menu bar only)", isOn: Binding(get: { cleaner.launchAtLogin }, set: { cleaner.launchAtLogin = $0 }))
-                Stepper("Clean when free space is below \(cleaner.settings.thresholdPercent)%",
-                        value: $cleaner.settings.thresholdPercent, in: 1...50)
-                if let d = cleaner.disk { FreeSpaceBar(disk: d, threshold: cleaner.settings.thresholdPercent).frame(maxWidth: 420) }
-            }
-            .font(.system(size: 14))
-            .padding(.horizontal, 36)
-
-            HStack {
-                Text("WATCHED FOLDERS").font(.system(size: 12)).tracking(1).foregroundStyle(Theme.secondary)
-                Spacer()
-                Menu {
-                    ForEach(Category.allCases.filter { $0 != .largeFiles && $0 != .homeFolder }) { c in
-                        Button("\(c.name) — \(c.displayPath)") { add(c.roots) }
-                            .disabled(c.roots.allSatisfy(watched))
-                    }
-                    Divider()
-                    Button("Other folder…") { pickFolders() }
-                } label: {
-                    Text("Add folder…")
-                }
-                .menuStyle(.button).menuIndicator(.hidden).fixedSize()
-                .buttonStyle(OutlineButtonStyle()).controlSize(.small)
-            }
-            .padding(EdgeInsets(top: 28, leading: 36, bottom: 12, trailing: 36))
-
+        VStack(spacing: 0) {
+            HStack { Text("Auto-clean").fontWeight(.semibold); Spacer() }
+                .padding(.horizontal, 28).frame(minHeight: 54)
+                .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    if cleaner.settings.folders.isEmpty {
-                        Text("No folders yet. Nothing will be deleted until you add one.")
-                            .font(.system(size: 13)).foregroundStyle(Theme.secondary).padding(.vertical, 20)
-                    }
-                    ForEach(cleaner.settings.folders) { f in
-                        HStack(spacing: 14) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(f.name).font(.system(size: 15, weight: .medium))
-                                Text(f.url.abbreviatedPath).font(.system(size: 11)).monospaced().foregroundStyle(Theme.tertiary)
-                            }
-                            Spacer(minLength: 8)
-                            Button { cleaner.settings.folders.removeAll { $0.id == f.id } } label: { Image(systemName: "xmark") }
-                                .buttonStyle(.borderless).help("Stop watching this folder")
-                        }
-                        .lineLimit(1).truncationMode(.middle)
-                        .padding(.horizontal, 10).frame(minHeight: 56)
-                        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
-                    }
+                VStack(alignment: .leading, spacing: 28) {
+                    hero
+                    whenToClean
+                    foldersSection
+                    neverTouched
                 }
+                .frame(maxWidth: 860, alignment: .leading)
+                .padding(EdgeInsets(top: 24, leading: 28, bottom: 32, trailing: 28))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .overlay(alignment: .top) { Theme.divider.frame(height: 1) }
-            .padding(EdgeInsets(top: 0, leading: 36, bottom: 32, trailing: 36))
         }
+        .task(id: cleaner.settings.folders) { await measure() }
+        .onChange(of: cleaner.autoRuns) { eligible = [:]; Task { await measure() } }
         .alert("Can't watch that", isPresented: Binding(get: { !refused.isEmpty }, set: { _ in refused = [] })) {
             Button("OK") {}
         } message: {
             Text("\(refused.joined(separator: "\n"))\n\nSystem folders, your home folder and its top-level Library, Documents and Desktop are off limits.")
+        }
+    }
+
+    // MARK: Hero
+
+    private var hero: some View {
+        @Bindable var cleaner = cleaner
+        let s = cleaner.settings
+        let free = cleaner.disk?.free ?? 1
+        let (kicker, color, headline, detail): (String, Color, String, String) = {
+            if !s.enabled { return ("Off", Theme.secondary, "Auto-clean is off", "Nothing gets deleted unless you do it yourself.") }
+            switch cleaner.state {
+            case .waiting(_, let b, let n):
+                return ("Waiting for your OK", Theme.amber, "You're under \(s.thresholdPercent)% free",
+                        "It can free \(Theme.bytes(b)) by deleting \(Theme.plural(n, "old item")) and get you back toward \(s.stopPercent)%.")
+            case .stuck:
+                return ("Stuck", Theme.amber, "You're under \(s.thresholdPercent)% free",
+                        "Nothing in your folders is old enough to delete. Add folders below.")
+            case .low, .planning, .deleting:
+                return ("Cleaning", Theme.amber, "You're under \(s.thresholdPercent)% free", cleaner.state.detail)
+            default:
+                return ("Watching", Theme.accent, "All good: \(CleanState.pct(free)) free",
+                        "Auto-clean steps in when free space drops below \(s.thresholdPercent)% and stops once it's back above \(s.stopPercent)%.")
+            }
+        }()
+        let waiting: (bytes: Int64, count: Int)? = if case .waiting(_, let b, let n) = cleaner.state, s.enabled { (b, n) } else { nil }
+
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(kicker.uppercased()).font(.system(size: 12, weight: .semibold)).tracking(0.7).foregroundStyle(color)
+                    Text(headline).font(.system(size: 24, weight: .bold)).tracking(-0.4)
+                    Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("Auto-clean", isOn: $cleaner.settings.enabled).toggleStyle(.switch).labelsHidden().tint(Theme.accent)
+            }
+            if let d = cleaner.disk {
+                VStack(alignment: .leading, spacing: 8) {
+                    SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent, height: 14)
+                    HStack(spacing: 18) {
+                        Text("\(Theme.bytes(d.available)) free of \(Theme.bytes(d.total)) (\(CleanState.pct(d.free)))")
+                        MarkerLegend(color: Theme.amber, text: "Starts below \(s.thresholdPercent)%")
+                        MarkerLegend(color: Theme.text, text: "Stops at \(s.stopPercent)%")
+                    }
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                }
+            }
+            if let waiting {
+                HStack(spacing: 10) {
+                    Button("Clean \(Theme.bytes(waiting.bytes)) now") { Task { await cleaner.check(force: true) } }
+                        .buttonStyle(AccentButtonStyle(height: 38))
+                    Button(showPlan ? "Hide list" : "See what would go") { showPlan.toggle() }
+                        .buttonStyle(OutlineButtonStyle(height: 38))
+                }
+                if showPlan {
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionLabel("Oldest first. This is what would go.").padding(.top, 10).padding(.bottom, 4)
+                        ForEach(cleaner.pending, id: \.item.id) { p in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(p.item.name)
+                                    Text(p.item.url.abbreviatedPath).font(Theme.mono(11, .regular)).foregroundStyle(Theme.tertiary)
+                                }
+                                .truncationMode(.middle)
+                                Spacer()
+                                Text(p.source).font(.system(size: 12)).foregroundStyle(Theme.secondary).frame(width: 110, alignment: .leading)
+                                Text(Theme.bytes(p.item.bytes)).font(Theme.mono(13)).frame(width: 80, alignment: .trailing)
+                            }
+                            .lineLimit(1).frame(minHeight: 36)
+                            .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+                        }
+                    }
+                    .overlay(alignment: .top) { Color(hex: 0x2E3035).frame(height: 1) }
+                }
+            }
+        }
+        .padding(22)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color == Theme.amber ? Color(hex: 0x5C4A26) : Color(hex: 0x2E3035)))
+    }
+
+    // MARK: Settings
+
+    private var whenToClean: some View {
+        @Bindable var cleaner = cleaner
+        let total = cleaner.disk?.total ?? 0
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("When to clean").font(.system(size: 15, weight: .semibold))
+            slider("Start when free space drops below", value: Binding(
+                get: { Double(cleaner.settings.thresholdPercent) },
+                set: { v in
+                    cleaner.settings.thresholdPercent = Int(v)
+                    cleaner.settings.stopPercent = max(cleaner.settings.stopPercent, Int(v) + 1)
+                }), range: 3...30, tint: Theme.amber, total: total)
+            slider("Stop once it's back above", value: Binding(
+                get: { Double(cleaner.settings.stopPercent) },
+                set: { cleaner.settings.stopPercent = max(Int($0), cleaner.settings.thresholdPercent + 1) }),
+                   range: 4...40, tint: Theme.text, total: total)
+            HStack(spacing: 16) {
+                Text("When it's time").foregroundStyle(Theme.soft).frame(width: 260, alignment: .leading)
+                Chip(label: "Ask me first", on: cleaner.settings.askFirst) { cleaner.settings.askFirst = true }
+                Chip(label: "Just do it", on: !cleaner.settings.askFirst) { cleaner.settings.askFirst = false }
+            }
+        }
+    }
+
+    private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, tint: Color, total: Int64) -> some View {
+        HStack(spacing: 16) {
+            Text(label).foregroundStyle(Theme.soft).frame(width: 260, alignment: .leading)
+            Slider(value: value, in: range, step: 1).tint(tint).frame(maxWidth: 380).accessibilityLabel(label)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(Int(value.wrappedValue))%").font(Theme.mono(15))
+                Text("\(Theme.bytes(total * Int64(value.wrappedValue) / 100)) free").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+            }
+            .frame(minWidth: 70, alignment: .trailing)
+        }
+        .frame(minHeight: 44)
+    }
+
+    private var foldersSection: some View {
+        @Bindable var cleaner = cleaner
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Folders it may clean").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text("Oldest items go first. Deleted for good, because the Trash doesn't free space.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+            }
+            VStack(spacing: 0) {
+                if cleaner.settings.folders.isEmpty {
+                    Text("No folders yet. Nothing will be deleted until you add one.")
+                        .foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, minHeight: 58)
+                        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+                }
+                ForEach($cleaner.settings.folders) { $f in folderRow($f) }
+                HStack {
+                    addMenu
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+            }
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.track))
+        }
+    }
+
+    private func folderRow(_ f: Binding<WatchedFolder>) -> some View {
+        let folder = f.wrappedValue
+        let tint = Category.allCases.first { $0.roots.contains { $0.standardizedFileURL == folder.url.standardizedFileURL } }?.color
+            ?? Theme.secondary
+        let e = eligible[folder.path]
+        return HStack(spacing: 0) {
+            Toggle("Clean \(folder.name)", isOn: f.enabled).toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Theme.accent)
+                .frame(width: 56)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 3).fill(tint).frame(width: 10, height: 10)
+                    Text(folder.name).font(.system(size: 14, weight: .medium))
+                }
+                Text(folder.url.abbreviatedPath).font(Theme.mono(11, .regular)).foregroundStyle(Theme.tertiary).truncationMode(.middle)
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if let e {
+                    Text(e.count > 0 ? "\(Theme.plural(e.count, "item")) · \(Theme.bytes(e.bytes))" : "Nothing old enough")
+                        .font(e.count > 0 ? Theme.mono(12, .regular) : .system(size: 12))
+                        .foregroundStyle(e.count > 0 && folder.enabled ? Theme.text : Theme.tertiary)
+                } else {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            .frame(width: 170, alignment: .leading)
+            Button { cleaner.settings.folders.removeAll { $0.id == folder.id } } label: {
+                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(GhostButtonStyle()).help("Stop watching this folder").accessibilityLabel("Stop cleaning \(folder.name)")
+            .frame(width: 44)
+        }
+        .frame(minHeight: 58)
+        .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
+    }
+
+    private var addMenu: some View {
+        Menu {
+            ForEach(Category.allCases.filter { $0 != .largeFiles && $0 != .homeFolder }) { c in
+                Button("\(c.name) — \(c.displayPath)") { add(c.roots) }
+                    .disabled(c.roots.allSatisfy(watched))
+            }
+            Divider()
+            Button("Other folder…") { pickFolders() }
+        } label: {
+            Label("Add folder…", systemImage: "plus")
+        }
+        .menuStyle(.button).menuIndicator(.hidden).fixedSize()
+        .buttonStyle(OutlineButtonStyle())
+    }
+
+    private var neverTouched: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Never touched, no matter what").font(.system(size: 15, weight: .semibold))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 8)], spacing: 8) {
+                rule("lock", "Apple and system caches", "com.apple.* and anything macOS refused before. macOS blocks these anyway.")
+                rule("clock", "Anything changed in the last 3 days", "However old the rest of its folder is.")
+                rule("icloud", "iCloud Drive and Photos", "Synced stuff is never auto-deleted.")
+            }
+        }
+    }
+
+    private func rule(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(Theme.secondary).frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).fontWeight(.medium)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: Actions
+
+    /// What each folder could free right now. Sizes every eligible item, so it runs off the main thread.
+    // ponytail: re-measures every folder whenever the list changes; cache per folder if it gets slow.
+    private func measure() async {
+        let skip = cleaner.skip
+        for f in cleaner.settings.folders where eligible[f.path] == nil {
+            let picks = await Task.detached {
+                AutoCleaner.plan(AutoCleaner.candidates([f]), need: .max, skip: skip) { DiskScanner.item(at: $0)?.bytes ?? 0 }
+            }.value
+            eligible[f.path] = (picks.count, picks.reduce(0) { $0 + $1.item.bytes })
         }
     }
 

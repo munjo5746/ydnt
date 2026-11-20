@@ -48,27 +48,54 @@ final class AutoCleanTests: XCTestCase {
     @MainActor func testHistoryKeepsNewestAndPersists() throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "ydnt-\(UUID()).json")
         defer { try? FileManager.default.removeItem(at: file) }
-        let h = History(file: file, cap: 3)
+        let h = History(file: file)
         func entries(_ run: UUID, _ names: [String]) -> [HistoryEntry] {
             names.map { HistoryEntry(run: run, date: .now, path: "/x/\($0)", bytes: 1, source: "x", auto: true, error: nil) }
         }
-        let r1 = UUID(), r2 = UUID()
+        let r1 = UUID(), r2 = UUID(), r3 = UUID()
         h.append(entries(r1, ["a", "b"]))
         h.append(entries(r2, ["c", "d"]))
-        XCTAssertEqual(h.entries.map(\.name), ["d", "c", "b"])
+        XCTAssertEqual(h.entries.map(\.name), ["d", "c", "b", "a"])
         XCTAssertEqual(h.runs.map(\.id), [r2, r1])
         XCTAssertEqual(h.runs[0].entries.map(\.name), ["c", "d"])
-        XCTAssertEqual(History(file: file, cap: 3).entries.map(\.name), ["d", "c", "b"])
+        XCTAssertEqual(History(file: file).entries.map(\.name), ["d", "c", "b", "a"])
+
+        // Older than the retention window: dropped on append and on load.
+        h.append([HistoryEntry(run: UUID(), date: .now.addingTimeInterval(-91 * 86_400), path: "/x/old", bytes: 1, source: "x", auto: true, error: nil)])
+        XCTAssertFalse(h.entries.contains { $0.name == "old" })
+
+        // Undo drops a whole run; CSV has a header plus one line per entry.
+        h.remove(run: r2)
+        XCTAssertEqual(h.entries.map(\.name), ["b", "a"])
+        XCTAssertEqual(h.csv.split(separator: "\n").count, 3)
 
         // Run splits succeeded/failed; old entries without free-space fields still decode.
-        h.append([HistoryEntry(run: r1, date: .now, path: "/x/ok", bytes: 5, source: "x", auto: true, error: nil, freeBefore: 0.08, freeAfter: 0.12),
-                  HistoryEntry(run: r1, date: .now, path: "/x/bad", bytes: 7, source: "x", auto: true, error: "nope", freeBefore: 0.08, freeAfter: 0.12)])
+        h.append([HistoryEntry(run: r3, date: .now, path: "/x/ok", bytes: 5, source: "x", auto: true, error: nil, freeBefore: 0.08, freeAfter: 0.12),
+                  HistoryEntry(run: r3, date: .now, path: "/x/bad", bytes: 7, source: "x", auto: true, error: "nope", freeBefore: 0.08, freeAfter: 0.12)])
         let run = h.runs[0]
         XCTAssertEqual(run.succeeded.map(\.name), ["ok"])
         XCTAssertEqual(run.failures.map(\.name), ["bad"])
         XCTAssertEqual(run.freed, 5)
         XCTAssertEqual(run.freeAfter, 0.12)
         let old = #"[{"id":"\#(UUID())","run":"\#(UUID())","date":0,"path":"/x/y","bytes":1,"source":"x","auto":false}]"#
-        XCTAssertNil(try JSONDecoder().decode([HistoryEntry].self, from: Data(old.utf8))[0].freeBefore)
+        let decoded = try JSONDecoder().decode([HistoryEntry].self, from: Data(old.utf8))[0]
+        XCTAssertNil(decoded.freeBefore)
+        XCTAssertNil(decoded.trashedTo)
+    }
+
+    func testPlanSkipsRecentAppleAndRefused() {
+        let candidates = [c("fresh", daysAgo: 1), c("com.apple.Safari", daysAgo: 400), c("refused", daysAgo: 300), c("ok", daysAgo: 10)]
+        let picks = AutoCleaner.plan(candidates, need: .max, now: now, skip: ["/w/refused"]) { _ in 1 }
+        XCTAssertEqual(picks.map(\.item.name), ["ok"])
+    }
+
+    func testOldSettingsDecodeWithDefaults() throws {
+        let old = #"{"enabled":false,"thresholdPercent":20,"folders":[{"path":"/w"}]}"#
+        let s = try JSONDecoder().decode(AutoCleanSettings.self, from: Data(old.utf8))
+        XCTAssertFalse(s.enabled)
+        XCTAssertEqual(s.thresholdPercent, 20)
+        XCTAssertEqual(s.stopPercent, 25)
+        XCTAssertFalse(s.askFirst)
+        XCTAssertEqual(s.folders, [WatchedFolder(path: "/w", enabled: true)])
     }
 }

@@ -60,7 +60,7 @@ enum DiskScanner {
     static func item(at url: URL) -> ScanItem? {
         guard let v = try? url.resourceValues(forKeys: keys) else { return nil }
         let bytes = v.isDirectory == true ? directorySize(url) : Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
-        return ScanItem(url: url, bytes: bytes, isDirectory: v.isDirectory == true)
+        return ScanItem(url: url, bytes: bytes, isDirectory: v.isDirectory == true, modified: v.contentModificationDate)
     }
 
     private static func directorySize(_ url: URL) -> Int64 {
@@ -85,7 +85,7 @@ enum DiskScanner {
                 continue
             }
             let bytes = Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
-            if bytes >= 1 << 30 { out.append(ScanItem(url: url, bytes: bytes)) }
+            if bytes >= 1 << 30 { out.append(ScanItem(url: url, bytes: bytes, modified: v.contentModificationDate)) }
         }
         return out
     }
@@ -96,11 +96,18 @@ final class ScanModel {
     var results: [Category: CategoryResult] = [:]
     var isScanning: Bool { results.values.contains { $0.status == .scanning } }
     var needsAccess: Bool { results.values.contains { $0.status == .needsAccess } }
+    private(set) var scannedAt: Date?
     private var task: Task<Void, Never>?
+
+    /// Everything that could go: non-protected items across all categories.
+    var reclaimable: Int64 {
+        results.values.reduce(0) { $0 + $1.items.filter { !$0.isProtected }.reduce(0) { $0 + $1.bytes } }
+    }
 
     func scanAll() {
         if ProcessInfo.processInfo.arguments.contains("--fake") {
             results = Dictionary(uniqueKeysWithValues: Fixtures.fake.map { ($0.category, $0) })
+            scannedAt = .now
             return
         }
         task?.cancel()
@@ -110,6 +117,7 @@ final class ScanModel {
                 for c in Category.allCases { group.addTask { DiskScanner.scan(c) } }
                 for await r in group where !Task.isCancelled { results[r.category] = r }
             }
+            if !Task.isCancelled { scannedAt = .now }
         }
     }
 

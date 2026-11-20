@@ -60,35 +60,4 @@ try #"{ "images" : [\#n    \#(images.joined(separator: ",\n    "))\#n  ],\#n  "i
 try #"{ "info" : { "version" : 1, "author" : "xcode" } }"#
     .write(to: dir.deletingLastPathComponent().appending(path: "Contents.json"), atomically: true, encoding: .utf8)
 print("Wrote \(images.count) icons to \(dir.path)")
-
-// Menu bar: the same "nah." in solid black on transparent, as a template image so macOS tints it.
-func renderMenuBar(_ scale: Int) -> Data {
-    let (w, h) = (34 * scale, 18 * scale)
-    let cg = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: srgb,
-                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    cg.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
-    let text = NSAttributedString(string: "nah", attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 15, weight: .heavy), .foregroundColor: NSColor.black, .kern: -0.5,
-    ])
-    cg.textPosition = CGPoint(x: 0, y: 5)
-    CTLineDraw(CTLineCreateWithAttributedString(text), cg)
-    cg.setFillColor(hex(0))
-    cg.fillEllipse(in: CGRect(x: 28, y: 5, width: 4, height: 4))
-    return NSBitmapImageRep(cgImage: cg.makeImage()!).representation(using: .png, properties: [:])!
-}
-
-let bar = dir.deletingLastPathComponent().appending(path: "MenuBarIcon.imageset")
-try FileManager.default.createDirectory(at: bar, withIntermediateDirectories: true)
-try renderMenuBar(1).write(to: bar.appending(path: "menubar.png"))
-try renderMenuBar(2).write(to: bar.appending(path: "menubar@2x.png"))
-try #"""
-{
-  "images" : [
-    { "idiom" : "mac", "scale" : "1x", "filename" : "menubar.png" },
-    { "idiom" : "mac", "scale" : "2x", "filename" : "menubar@2x.png" }
-  ],
-  "info" : { "version" : 1, "author" : "xcode" },
-  "properties" : { "template-rendering-intent" : "template" }
-}
-"""#.write(to: bar.appending(path: "Contents.json"), atomically: true, encoding: .utf8)
-print("Wrote menu bar icon to \(bar.path)")
+// The menu bar icon is drawn in code: NSImage.menuBarIcon in YouDontNeedThatApp.swift.
