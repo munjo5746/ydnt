@@ -288,8 +288,14 @@ final class AutoCleaner {
         }
     }
 
-    /// Anything changed this recently is never auto-deleted.
+    /// Anything changed this recently is never auto-deleted, except in ~/Library/Caches:
+    /// apps touch their caches constantly, so the rule would leave nothing to clean there.
     nonisolated static let minAge: TimeInterval = 3 * 86_400
+
+    nonisolated static func tooRecent(_ c: Candidate, now: Date) -> Bool {
+        now.timeIntervalSince(c.modified) < minAge
+            && c.url.deletingLastPathComponent().standardizedFileURL.pathComponents != Category.cachesFolder.standardizedFileURL.pathComponents
+    }
 
     /// Oldest first, until `need` bytes are covered. Sizes lazily: only what it takes gets measured.
     /// Skips recent items, Apple's own caches and paths in `skip`.
@@ -299,7 +305,7 @@ final class AutoCleaner {
         var picks: [Pick] = []
         var total: Int64 = 0
         let eligible = candidates.filter {
-            now.timeIntervalSince($0.modified) >= minAge && !$0.url.lastPathComponent.hasPrefix("com.apple.")
+            !tooRecent($0, now: now) && !$0.url.lastPathComponent.hasPrefix("com.apple.")
                 && !skip.contains($0.url.path(percentEncoded: false))
         }
         for c in eligible.sorted(by: { $0.modified < $1.modified }) where total < need {

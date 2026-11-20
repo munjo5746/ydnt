@@ -233,7 +233,7 @@ struct AutoCleanView: View {
             Text("Never touched, no matter what").font(.system(size: 15, weight: .semibold))
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 8)], spacing: 8) {
                 rule("lock", "Apple and system caches", "com.apple.* and anything macOS refused before. macOS blocks these anyway.")
-                rule("clock", "Anything changed in the last 3 days", "However old the rest of its folder is.")
+                rule("clock", "Anything changed in the last 3 days", "However old the rest of its folder is. Caches are the exception: apps touch them constantly.")
                 rule("icloud", "iCloud Drive and Photos", "Synced stuff is never auto-deleted.")
             }
         }

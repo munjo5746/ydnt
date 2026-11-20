@@ -89,6 +89,13 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertEqual(picks.map(\.item.name), ["ok"])
     }
 
+    func testCachesIgnoreTheRecentRule() {
+        let cache = Candidate(url: Category.cachesFolder.appending(path: "com.spotify.client"),
+                              modified: now.addingTimeInterval(-3600), source: "Caches")
+        let picks = AutoCleaner.plan([cache, c("fresh", daysAgo: 1)], need: .max, now: now) { _ in 1 }
+        XCTAssertEqual(picks.map(\.item.name), ["com.spotify.client"])
+    }
+
     func testOldSettingsDecodeWithDefaults() throws {
         let old = #"{"enabled":false,"thresholdPercent":20,"folders":[{"path":"/w"}]}"#
         let s = try JSONDecoder().decode(AutoCleanSettings.self, from: Data(old.utf8))
