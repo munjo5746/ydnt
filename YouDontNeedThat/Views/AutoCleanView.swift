@@ -37,14 +37,20 @@ struct AutoCleanView: View {
 
     private var hero: some View {
         @Bindable var cleaner = cleaner
-        let s = cleaner.settings
+        // Text and markers follow the settings the current result was computed with, not the live sliders,
+        // so headline and helper text always agree. The sliders show their own live numbers.
+        let s = cleaner.checkedSettings
         let free = cleaner.disk?.free ?? 1
+        let busy = cleaner.rechecking
         let (kicker, color, headline, detail): (String, Color, String, String) = {
             if !s.enabled { return ("Off", Theme.secondary, "Auto-clean is off", "Nothing gets deleted unless you do it yourself.") }
             switch cleaner.state {
-            case .waiting(_, let b, let n):
+            case .waiting(_, let b, let n) where s.askFirst:
                 return ("Waiting for your OK", Theme.amber, "You're under \(s.thresholdPercent)% free",
                         "It can free \(Theme.bytes(b)) by deleting \(Theme.plural(n, "old item")) and get you back toward \(s.stopPercent)%.")
+            case .waiting(_, let b, let n):
+                return ("Cleaning soon", Theme.amber, "You're under \(s.thresholdPercent)% free",
+                        "At the next check (within 10 minutes) it deletes \(Theme.plural(n, "old item")), freeing \(Theme.bytes(b)). Or clean now.")
             case .stuck:
                 return ("Stuck", Theme.amber, "You're under \(s.thresholdPercent)% free",
                         "Nothing in your folders is old enough to delete. Add folders below.")
@@ -56,14 +62,26 @@ struct AutoCleanView: View {
             }
         }()
         let waiting: (bytes: Int64, count: Int)? = if case .waiting(_, let b, let n) = cleaner.state, s.enabled { (b, n) } else { nil }
+        let working: Bool = switch cleaner.state { case .low, .planning, .deleting: true; default: false }
 
         return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(kicker.uppercased()).font(.system(size: 12, weight: .semibold)).tracking(0.7).foregroundStyle(color)
-                    Text(headline).font(.system(size: 24, weight: .bold)).tracking(-0.4)
-                    Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        if busy || working { ProgressView().controlSize(.mini) }
+                        Text((busy ? "Checking with your new settings…" : kicker).uppercased())
+                            .font(.system(size: 12, weight: .semibold)).tracking(0.7)
+                            .foregroundStyle(busy ? Theme.secondary : color)
+                    }
+                    Group {
+                        Text(headline).font(.system(size: 24, weight: .bold)).tracking(-0.4)
+                        Text(detail).font(.system(size: 14)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .opacity(busy ? 0.4 : 1)
                 }
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.25), value: "\(busy)\(kicker)\(headline)\(detail)")
+                .accessibilityElement(children: .combine)
                 Spacer()
                 Toggle("Auto-clean", isOn: $cleaner.settings.enabled).toggleStyle(.switch).labelsHidden().tint(Theme.accent)
             }
@@ -77,6 +95,7 @@ struct AutoCleanView: View {
                     }
                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 }
+                .animation(.easeInOut(duration: 0.3), value: s)
             }
             if let waiting {
                 HStack(spacing: 10) {
@@ -85,6 +104,7 @@ struct AutoCleanView: View {
                     Button(showPlan ? "Hide list" : "See what would go") { showPlan.toggle() }
                         .buttonStyle(OutlineButtonStyle(height: 38))
                 }
+                .disabled(busy)   // the plan is about to change
                 if showPlan {
                     VStack(alignment: .leading, spacing: 0) {
                         SectionLabel("Oldest first. This is what would go.").padding(.top, 10).padding(.bottom, 4)

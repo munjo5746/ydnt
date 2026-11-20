@@ -105,4 +105,32 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertFalse(s.askFirst)
         XCTAssertEqual(s.folders, [WatchedFolder(path: "/w", enabled: true)])
     }
+
+    /// Dragging sliders must never delete: changes settle into one plan-only check.
+    @MainActor func testSettingsChangeRePlansButNeverDeletes() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appending(path: "ydnt-\(UUID())")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let file = dir.appending(path: "old.bin")
+        try Data(count: 4096).write(to: file)
+        try fm.setAttributes([.modificationDate: Date.now.addingTimeInterval(-30 * 86_400)], ofItemAtPath: file.path)
+
+        let suite = "ydnt-test-\(UUID())"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let history = History(file: dir.appending(path: "history.json"))
+        let c = AutoCleaner(history: history, defaults: UserDefaults(suiteName: suite)!, poll: false)
+        c.settings.folders = [WatchedFolder(path: dir.path(percentEncoded: false))]
+        c.settings.thresholdPercent = 99    // always "low"
+        c.settings.stopPercent = 100
+        XCTAssertTrue(c.rechecking)
+        XCTAssertEqual(c.checkedSettings.thresholdPercent, 10)   // text keeps the last result until the new one lands
+
+        try await Task.sleep(for: .seconds(1.8))
+        XCTAssertFalse(c.rechecking)
+        XCTAssertEqual(c.checkedSettings.thresholdPercent, 99)
+        guard case .waiting(_, _, 1) = c.state else { return XCTFail("expected a 1-item plan, got \(c.state)") }
+        XCTAssertTrue(fm.fileExists(atPath: file.path))
+        XCTAssertTrue(history.entries.isEmpty)
+    }
 }

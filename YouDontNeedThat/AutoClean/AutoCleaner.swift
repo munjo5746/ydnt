@@ -107,25 +107,38 @@ final class AutoCleaner {
     private(set) var disk = DiskSpace.current()
     private(set) var autoRuns = 0   // bumps after each auto run that deleted something, so open windows rescan
     var pendingScreen: Screen?       // set by the menu bar panel, consumed by RootView
-    private(set) var pending: [Pick] = []   // ask-first plan waiting for an OK
+    private(set) var pending: [Pick] = []   // plan waiting for an OK (ask-first) or the next check (just-do-it)
+    private(set) var rechecking = false     // settings changed; a plan-only check is pending or running
+    private(set) var checkedSettings = AutoCleanSettings()   // what `state` was computed with
     let history: History
 
     private var running = false
+    private var notified = false            // ask-first: notification sent for the current plan
+    private var recheck: Task<Void, Never>?
+    private var recheckStarted = ContinuousClock.now
+    static let settleDelay = Duration.milliseconds(500)   // quiet time after the last change before re-planning
+    static let minChecking = Duration.milliseconds(1300)  // "Checking…" shows at least this long (settle + ~0.8 s)
     private var loop: Task<Void, Never>?
     private static let key = "autoClean"
     private static let skipKey = "autoCleanSkip"
     /// Paths macOS refused to delete. Skipped by later runs instead of failing every time.
     var skip: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: Self.skipKey) ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: Self.skipKey) }
+        get { Set(defaults.stringArray(forKey: Self.skipKey) ?? []) }
+        set { defaults.set(Array(newValue), forKey: Self.skipKey) }
     }
 
-    init(history: History = History()) {
+    private let defaults: UserDefaults
+
+    /// `poll: false` skips the 10-minute loop (tests).
+    init(history: History = History(), defaults: UserDefaults = .standard, poll: Bool = true) {
         self.history = history
-        settings = UserDefaults.standard.data(forKey: Self.key)
+        self.defaults = defaults
+        settings = defaults.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode(AutoCleanSettings.self, from: $0) } ?? AutoCleanSettings()
+        checkedSettings = settings
         if !settings.enabled { state = .paused }
         // ponytail: fixed 10-minute poll; no wake-from-sleep hook, the next tick catches up.
+        guard poll else { return }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.check()
@@ -137,25 +150,32 @@ final class AutoCleaner {
     func refreshDisk() { disk = DiskSpace.current() }
 
     /// The whole auto-clean pass. `force` runs it even while paused, and without asking first.
-    func check(force: Bool = false) async {
+    /// `planOnly` (after a settings change) never deletes: it only refreshes `pending` and `state`.
+    func check(force: Bool = false, planOnly: Bool = false) async {
         refreshDisk()
         guard !running, settings.enabled || force, let disk else { return }
+        checkedSettings = settings
         guard disk.need(percent: settings.thresholdPercent) > 0 else {
             pending = []
             if case .freed = state {} else { state = settings.enabled ? .idle : .paused }
             return
         }
-        if settings.askFirst, !force, case .waiting = state { return }   // already asked; wait for the OK
+        if settings.askFirst, !force, !planOnly, case .waiting(let f, let b, let n) = state {
+            // Already planned; ask once, then wait for the OK.
+            if !notified { Self.notifyLow(free: f, bytes: b, count: n); notified = true }
+            return
+        }
         let need = disk.need(percent: settings.stopPercent)
         running = true
         defer { running = false }
 
-        if settings.askFirst && !force {
-            state = .planning
+        if planOnly || (settings.askFirst && !force) {
+            if !planOnly { state = .planning }
             pending = await plan(need: need)
             let bytes = pending.reduce(0) { $0 + $1.item.bytes }
             state = pending.isEmpty ? .stuck(free: disk.free) : .waiting(free: disk.free, bytes: bytes, count: pending.count)
-            if !pending.isEmpty { Self.notifyLow(free: disk.free, bytes: bytes, count: pending.count) }
+            notified = planOnly   // in-app change: the user is looking, no need to notify
+            if !planOnly, !pending.isEmpty { Self.notifyLow(free: disk.free, bytes: bytes, count: pending.count) }
             return
         }
 
@@ -243,13 +263,33 @@ final class AutoCleaner {
     }
 
     private func settingsChanged(from old: AutoCleanSettings) {
-        if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: Self.key) }
+        if let data = try? JSONEncoder().encode(settings) { defaults.set(data, forKey: Self.key) }
         guard settings.enabled != old.enabled || settings.thresholdPercent != old.thresholdPercent
             || settings.stopPercent != old.stopPercent || settings.askFirst != old.askFirst
             || settings.folders != old.folders else { return }
-        if !settings.enabled { if !running { state = .paused; pending = [] }; return }
-        if !running { state = .idle }
-        Task { await check() }
+        if !settings.enabled {
+            recheck?.cancel(); rechecking = false
+            checkedSettings = settings
+            if !running { state = .paused; pending = [] }
+            return
+        }
+        scheduleRecheck()
+    }
+
+    /// Settings changed: wait until they settle, then re-plan without deleting.
+    /// "Checking…" stays up long enough to read, so the result doesn't flash.
+    private func scheduleRecheck() {
+        recheck?.cancel()
+        if !rechecking { recheckStarted = .now }
+        rechecking = true
+        recheck = Task { [weak self] in
+            try? await Task.sleep(for: Self.settleDelay)
+            guard !Task.isCancelled, let self else { return }
+            await self.check(planOnly: true)
+            try? await Task.sleep(until: self.recheckStarted + Self.minChecking)
+            guard !Task.isCancelled else { return }
+            self.rechecking = false
+        }
     }
 
     // MARK: Ask-first notification
