@@ -94,7 +94,6 @@ struct MenuBarPanel: View {
         HStack(spacing: 8) {
             tile("Could free", scan.scannedAt == nil ? "…" : Theme.bytes(scan.reclaimable), Theme.text)
             tile("Freed in \(Date.now.formatted(.dateTime.month(.abbreviated)))", Theme.bytes(thisMonth.reduce(0) { $0 + $1.freed }), Theme.accent)
-            tile("Auto-cleans", "\(thisMonth.filter(\.auto).count) this month", Theme.text)
         }
     }
 

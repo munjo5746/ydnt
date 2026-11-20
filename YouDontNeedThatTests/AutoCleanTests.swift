@@ -148,6 +148,10 @@ final class AutoCleanTests: XCTestCase {
         XCTAssertEqual(AutoCleanView.interval(15), "15 min")
         XCTAssertEqual(AutoCleanView.interval(360), "6 hours")
         XCTAssertEqual(AutoCleanView.interval(1440), "Once a day")
+        XCTAssertEqual(AutoCleanView.ago(now.addingTimeInterval(-40), now: now), "just now")
+        XCTAssertEqual(AutoCleanView.ago(now.addingTimeInterval(-12 * 60 - 59), now: now), "12 min ago")
+        XCTAssertEqual(AutoCleanView.ago(now.addingTimeInterval(-3 * 3600), now: now), "3 hr ago")
+        XCTAssertEqual(AutoCleanView.ago(now.addingTimeInterval(-86_400), now: now), "1 day ago")
     }
 
     /// The schedule only checks when due, and remembers the last check across relaunches.

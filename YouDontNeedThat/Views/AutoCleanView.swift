@@ -154,19 +154,30 @@ struct AutoCleanView: View {
 
     /// "Last checked 12 min ago · Next check at 3:40 PM". Re-renders each minute so "due now" shows up.
     private var scheduleLine: some View {
-        TimelineView(.everyMinute) { _ in
+        TimelineView(.everyMinute) { t in
             HStack(spacing: 6) {
                 Image(systemName: "clock").font(.system(size: 11))
                 if !cleaner.settings.enabled {
                     Text("Paused. No checks until you turn it back on.")
                 } else {
                     if let last = cleaner.lastCheck {
-                        Text("Last checked \(Text(last, style: .relative)) ago ·")
+                        Text("Last checked \(Self.ago(last, now: t.date)) ·")
                     }
                     Text(cleaner.nextCheck <= .now ? "Next check any moment" : "Next check \(Self.when(cleaner.nextCheck))")
                 }
             }
             .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+        }
+    }
+
+    /// "just now", "12 min ago", "3 hr ago", "2 days ago". Minute steps, no ticking seconds.
+    static func ago(_ d: Date, now: Date) -> String {
+        let m = Int(now.timeIntervalSince(d) / 60)
+        switch m {
+        case ..<1: return "just now"
+        case ..<60: return "\(m) min ago"
+        case ..<1440: return "\(m / 60) hr ago"
+        default: return Theme.plural(m / 1440, "day") + " ago"
         }
     }
 
