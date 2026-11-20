@@ -48,6 +48,7 @@ struct HistoryView: View {
                     }
                 }
                 .padding(24).padding(.horizontal, 4)
+                .pinnedScrollBar()
             }
             HStack(spacing: 12) {
                 Text("History is kept for \(History.keepDays) days.").foregroundStyle(Theme.tertiary)

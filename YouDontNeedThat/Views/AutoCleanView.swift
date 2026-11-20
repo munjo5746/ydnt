@@ -23,6 +23,7 @@ struct AutoCleanView: View {
                 .frame(maxWidth: 860, alignment: .leading)
                 .padding(EdgeInsets(top: 24, leading: 28, bottom: 32, trailing: 28))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .pinnedScrollBar()
             }
         }
         .task(id: cleaner.settings.folders) { await measure() }

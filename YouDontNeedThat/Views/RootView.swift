@@ -100,6 +100,7 @@ struct RootView: View {
                         .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
                 }
                 .padding(EdgeInsets(top: 24, leading: 28, bottom: 16, trailing: 28))
+                .pinnedScrollBar()
             }
             basketBar
         }

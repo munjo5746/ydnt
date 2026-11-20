@@ -41,6 +41,7 @@ struct ConfirmSheet: View {
                     }
                 }
                 .padding(EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 12))
+                .pinnedScrollBar()
             }
             .frame(maxHeight: 220)
             .overlay(alignment: .top) { Theme.track.frame(height: 1) }

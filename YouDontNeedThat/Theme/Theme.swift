@@ -383,3 +383,26 @@ struct BrandLockup: View {
         .accessibilityLabel("You Don't Need That")
     }
 }
+
+// MARK: Scroll bars
+
+/// With a mouse attached, macOS uses scroll bars that take up width, and only while content overflows,
+/// so the layout shifts as content grows past the window or shrinks back. This keeps the track always shown
+/// (constant width). Floating trackpad scroll bars take no width either way and are unaffected.
+private struct PinnedScrollBar: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.pin() }
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            pin()
+        }
+        func pin() { enclosingScrollView?.autohidesScrollers = false }
+    }
+}
+
+extension View {
+    /// Put on a ScrollView's content.
+    func pinnedScrollBar() -> some View { background(PinnedScrollBar()) }
+}
