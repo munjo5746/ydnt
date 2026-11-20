@@ -54,7 +54,7 @@ struct MenuBarPanel: View {
                 Text("free").foregroundStyle(Theme.secondary)
                 Spacer()
                 if scan.isScanning { ProgressView().controlSize(.mini).help("Scanning your files…") }
-                Text("of \(Theme.bytes(d.total)) · Macintosh HD").font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+                Text("of \(Theme.bytes(d.total))").font(.system(size: 12)).foregroundStyle(Theme.tertiary)   // disk name didn't fit
             }
             SpaceBar(free: d.free, start: s.thresholdPercent, stop: s.stopPercent, parts: SpacePart.usage(scan, d))
             HStack(spacing: 14) {
@@ -100,7 +100,7 @@ struct MenuBarPanel: View {
     private func tile(_ label: String, _ value: String, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label).font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-            Text(value).font(Theme.mono(15)).foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.7)
+            Text(value).font(Theme.mono(15)).foregroundStyle(color).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)

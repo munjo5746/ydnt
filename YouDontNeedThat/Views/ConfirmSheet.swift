@@ -42,7 +42,7 @@ struct ConfirmSheet: View {
                 }
                 .padding(EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 12))
             }
-            .frame(maxHeight: 220)
+            .frame(height: min(220, CGFloat(items.count) * 48))   // StableScrollView has no height of its own in a sheet
             .overlay(alignment: .top) { Theme.track.frame(height: 1) }
             .overlay(alignment: .bottom) { Theme.track.frame(height: 1) }
 
