@@ -28,7 +28,7 @@ struct YouDontNeedThatApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     /// Unit tests launch the app as their host: never auto-clean the real disk there.
     private static let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    let cleaner = AutoCleaner(poll: !testing)
+    let cleaner = Fixtures.isFake ? Fixtures.demoCleaner() : AutoCleaner(poll: !testing)
     let scan = ScanModel()     // shared by the window and the menu bar popover
 
     func applicationDidFinishLaunching(_ notification: Notification) {

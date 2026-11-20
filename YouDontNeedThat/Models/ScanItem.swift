@@ -24,6 +24,41 @@ struct CategoryResult: Sendable {
 
 /// Mockup data. Used by `--fake` launch argument and previews.
 enum Fixtures {
+    /// Demo mode: sample scan and history, its own settings, and deletes are simulated (nothing on disk changes).
+    static let isFake = ProcessInfo.processInfo.arguments.contains("--fake")
+
+    /// Auto-clean for demo mode: throwaway settings and history with a few sample runs.
+    @MainActor static func demoCleaner() -> AutoCleaner {
+        let suite = "com.edwardchung.ydnt.demo"
+        UserDefaults().removePersistentDomain(forName: suite)
+        let history = History(file: FileManager.default.temporaryDirectory.appending(path: "ydnt-demo-\(UUID()).json"))
+        func run(_ daysAgo: Double, auto: Bool, trash: Bool = false, _ items: [(String, Double, String)], failed: [String] = []) {
+            let id = UUID(), date = Date.now.addingTimeInterval(-daysAgo * 86_400)
+            let path = { (p: String) in Category.home.appending(path: p).path(percentEncoded: false) }
+            history.append(items.map { p, b, source in
+                HistoryEntry(run: id, date: date, path: path(p), bytes: Int64(b), source: source, auto: auto, error: nil,
+                             trashedTo: trash ? path(".Trash/" + (p as NSString).lastPathComponent) : nil)
+            } + failed.map {
+                HistoryEntry(run: id, date: date, path: path("Library/Caches/" + $0), bytes: 0, source: "Caches", auto: auto,
+                             error: "You don't have permission to access it.")
+            })
+        }
+        run(18, auto: false, [("Parallels/Windows 10.pvm", 18.4e9, "Large Files")])
+        run(9, auto: true, [("Library/Developer/Xcode/DerivedData/ShopKit-gdlqzkfxbc", 2.1e9, "DerivedData"),
+                            ("Library/Developer/Xcode/iOS DeviceSupport/iPhone 14 · iOS 16.4", 1.9e9, "iOS DeviceSupport")])
+        run(3, auto: false, trash: true, [("Downloads/Xcode_15.3.xip", 3.2e9, "Old Downloads"),
+                                          ("Downloads/ubuntu-23.10-desktop-arm64.iso", 2.6e9, "Old Downloads")])
+        run(0.2, auto: true, [("Library/Caches/Yarn", 1.21e9, "Caches"), ("Library/Caches/com.figma.Desktop", 812e6, "Caches"),
+                              ("Library/Caches/com.tinyspeck.slackmacgap", 604e6, "Caches")],
+            failed: ["CloudKit", "FamilyCircle"])
+        let c = AutoCleaner(history: history, defaults: UserDefaults(suiteName: suite)!)   // schedule runs; deletes are simulated
+        c.settings.thresholdPercent = 5
+        c.settings.stopPercent = 15
+        c.settings.folders = ["Library/Caches", "Library/Developer/Xcode/DerivedData", "Library/Developer/Xcode/iOS DeviceSupport", "Downloads"]
+            .map { WatchedFolder(path: Category.home.appending(path: $0).path(percentEncoded: false)) }
+        return c
+    }
+
     static let fake: [CategoryResult] = [
         r(.largeFiles, [("Parallels/Windows 11.pvm/Windows11_ARM.vmdk", 24.5e9), ("Movies/wedding-raw-footage.zip", 11.2e9), ("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw", 8.0e9)]),
         r(.homeFolder, [(".npm", 20e9), ("Documents", 14.3e9), (".gradle", 4.9e9), (".bun", 2.6e9), ("Desktop", 1.2e9)]),

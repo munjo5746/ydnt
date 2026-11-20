@@ -251,7 +251,9 @@ final class AutoCleaner {
         var freed: Int64 = 0
         for (i, p) in picks.enumerated() {
             let url = p.item.url
-            let (error, trashedTo) = await Task.detached { () -> (String?, String?) in
+            // Demo mode (--fake) pretends: nothing on disk is touched.
+            let (error, trashedTo) = Fixtures.isFake ? (nil, trash ? Category.trashFolder.appending(path: url.lastPathComponent).path : nil)
+                : await Task.detached { () -> (String?, String?) in
                 do {
                     if trash {
                         var out: NSURL?
@@ -276,7 +278,7 @@ final class AutoCleaner {
     /// Puts a trashed run back where it came from and drops it from history. Returns how many came back.
     func undoTrash(run: UUID) async -> Int {
         let moves = history.entries.filter { $0.run == run }.compactMap { e in e.trashedTo.map { ($0, e.path) } }
-        let back = await Task.detached {
+        let back = Fixtures.isFake ? moves.count : await Task.detached {
             moves.filter { (try? FileManager.default.moveItem(atPath: $0.0, toPath: $0.1)) != nil }.count
         }.value
         history.remove(run: run)
@@ -286,6 +288,7 @@ final class AutoCleaner {
 
     /// Deletes everything in ~/.Trash. Needs Full Disk Access.
     func emptyTrash() async {
+        guard !Fixtures.isFake else { return }
         await Task.detached {
             let fm = FileManager.default
             for url in (try? fm.contentsOfDirectory(at: Category.trashFolder, includingPropertiesForKeys: nil)) ?? [] {

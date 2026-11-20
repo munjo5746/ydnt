@@ -132,7 +132,7 @@ final class ScanModel {
     }
 
     func scanAll() {
-        if ProcessInfo.processInfo.arguments.contains("--fake") {
+        if Fixtures.isFake {
             results = Dictionary(uniqueKeysWithValues: Fixtures.fake.map { ($0.category, $0) })
             order = Fixtures.fake.map(\.category)
             scannedAt = .now
