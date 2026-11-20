@@ -162,7 +162,7 @@ struct SpacePart: Identifiable {
     var id: String { name }
 
     static let other = Color(hex: 0x5B5E66)
-    static let free = Theme.soft            // light gray
+    static let free = Color.white.opacity(0.12)   // dim gray: visible, quieter than any used slice
 
     /// Scanned categories in the order their scan finished (so the bar fills left to right),
     /// then "Other" for everything the scan doesn't cover (apps, system…).
