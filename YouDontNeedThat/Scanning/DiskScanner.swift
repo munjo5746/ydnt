@@ -22,6 +22,12 @@ enum DiskScanner {
                 items = try children(of: category.roots[0])
                     .filter { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) < cutoff }
                     .compactMap(item(at:))
+            case .homeFolders:
+                // Library, Downloads and Trash already have their own categories; counting them here too
+                // would double the chart.
+                items = try FileManager.default.contentsOfDirectory(at: category.roots[0], includingPropertiesForKeys: Array(keys))
+                    .filter { !["Library", "Downloads", ".Trash"].contains($0.lastPathComponent) }
+                    .compactMap(item(at:))
             }
         } catch let e as CocoaError where e.code == .fileReadNoPermission {
             return CategoryResult(category: category, status: .needsAccess, items: [])
@@ -33,6 +39,20 @@ enum DiskScanner {
         return CategoryResult(category: category, status: .scanned, items: items)
     }
 
+    /// Everything directly inside a folder the user opened, hidden entries included.
+    nonisolated static func contents(of url: URL, in category: Category) -> CategoryResult {
+        do {
+            var items = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys)).compactMap(item(at:))
+            items.removeAll { $0.bytes == 0 }
+            items.sort { $0.bytes > $1.bytes }
+            return CategoryResult(category: category, status: .scanned, items: items)
+        } catch let e as CocoaError where e.code == .fileReadNoPermission {
+            return CategoryResult(category: category, status: .needsAccess, items: [])
+        } catch {
+            return CategoryResult(category: category, status: .scanned, items: [])
+        }
+    }
+
     static func children(of url: URL) throws -> [URL] {
         try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles)
     }
@@ -40,7 +60,7 @@ enum DiskScanner {
     static func item(at url: URL) -> ScanItem? {
         guard let v = try? url.resourceValues(forKeys: keys) else { return nil }
         let bytes = v.isDirectory == true ? directorySize(url) : Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
-        return ScanItem(url: url, bytes: bytes)
+        return ScanItem(url: url, bytes: bytes, isDirectory: v.isDirectory == true)
     }
 
     private static func directorySize(_ url: URL) -> Int64 {

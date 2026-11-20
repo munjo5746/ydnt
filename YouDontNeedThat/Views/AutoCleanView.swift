@@ -28,7 +28,7 @@ struct AutoCleanView: View {
                 Text("WATCHED FOLDERS").font(.system(size: 12)).tracking(1).foregroundStyle(Theme.secondary)
                 Spacer()
                 Menu {
-                    ForEach(Category.allCases.filter { $0 != .largeFiles }) { c in
+                    ForEach(Category.allCases.filter { $0 != .largeFiles && $0 != .homeFolder }) { c in
                         Button("\(c.name) — \(c.displayPath)") { add(c.roots) }
                             .disabled(c.roots.allSatisfy(watched))
                     }

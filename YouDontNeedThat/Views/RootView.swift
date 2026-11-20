@@ -4,6 +4,8 @@ struct RootView: View {
     @Environment(AutoCleaner.self) private var cleaner
     @State private var model = ScanModel()
     @State private var open: Category?
+    @State private var path: [URL] = []                      // folders opened inside `open`, outermost first
+    @State private var folders: [URL: CategoryResult] = [:]  // contents of opened folders
     @State private var hovered: String?
     @State private var basket: [ScanItem: Category] = [:]   // queued for deletion, across all categories
     @State private var errorMessage: String?
@@ -11,7 +13,11 @@ struct RootView: View {
     @State private var deleting = false
     @State private var confirmDelete = false
 
-    private var openResult: CategoryResult? { open.flatMap { model.results[$0] } }
+    private var openResult: CategoryResult? { path.last.map { folders[$0] } ?? open.flatMap { model.results[$0] } }
+    private var here: (name: String, path: String)? {
+        path.last.map { ($0.lastPathComponent, $0.abbreviatedPath) } ?? open.map { ($0.name, $0.displayPath) }
+    }
+    private var scanning: Bool { path.isEmpty ? model.isScanning : openResult?.status != .scanned }
     private var slices: [Slice] { openResult.map(Slice.items) ?? Slice.categories(model.results) }
     private var total: Int64 { slices.reduce(0) { $0 + $1.bytes } }
     private var focused: Slice? { slices.first { $0.id == hovered } }
@@ -33,7 +39,7 @@ struct RootView: View {
             footer
         }
         .onChange(of: basket.isEmpty) { _, empty in if empty, screen == .deleteList { screen = .chart } }
-        .onChange(of: cleaner.autoRuns) { model.scanAll() }
+        .onChange(of: cleaner.autoRuns) { model.scanAll(); folders = [:]; path.last.map(load) }
         .onChange(of: cleaner.pendingScreen, initial: true) { _, s in
             guard let s else { return }
             screen = s
@@ -99,18 +105,18 @@ struct RootView: View {
         VStack(spacing: 0) {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(open.map { "\($0.name): \(Theme.bytes(total))" } ?? "Where your space went")
+                    Text(here.map { scanning ? $0.name : "\($0.name): \(Theme.bytes(total))" } ?? "Where your space went")
                         .font(.system(size: 34, weight: .bold)).tracking(-1)
-                    Text(open?.displayPath ?? "Your home folder, scanned for clutter")
+                    Text(here?.path ?? "Your home folder, scanned for clutter")
                         .font(.system(size: 12)).monospaced().foregroundStyle(Theme.secondary)
                 }
                 Spacer()
                 HStack(spacing: 10) {
-                    if model.isScanning {
+                    if scanning {
                         ProgressView().controlSize(.small)
-                        Text("Judging your files…")
+                        Text(openResult?.status == .needsAccess ? "Needs Full Disk Access" : "Judging your files…")
                     } else {
-                        Text(open == nil ? "Click a slice to look inside." : "Click a slice to select it.")
+                        Text(open == nil ? "Click a slice to look inside." : "Click a folder to open it, ○ to select.")
                         if open == nil {
                             Button("Rescan") { model.scanAll() }.buttonStyle(OutlineButtonStyle()).controlSize(.small)
                         }
@@ -126,8 +132,10 @@ struct RootView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(slices) { s in
+                            let item = item(s.id)
                             LegendRow(slice: s, percent: percent(s.bytes), active: s.id == focused?.id,
-                                      queued: open != nil && queued(s.id),
+                                      queued: open != nil && queued(s.id), opens: item?.isDirectory == true,
+                                      onSelect: item.flatMap { i in i.isProtected ? nil : { toggle(i) } },
                                       onHover: { hovered = $0 ? s.id : nil }, onTap: { tapped(s.id) })
                         }
                     }
@@ -140,9 +148,9 @@ struct RootView: View {
 
     private var centerLabel: some View {
         let (kicker, size, name, path): (String, String, String, String) = if let f = focused {
-            ("\(percent(f.bytes)) of \(open?.name ?? "total")", Theme.bytes(f.bytes), f.name, f.path)
-        } else if let c = open {
-            ("This directory", Theme.bytes(total), c.name, c.displayPath)
+            ("\(percent(f.bytes)) of \(here?.name ?? "total")", Theme.bytes(f.bytes), f.name, f.path)
+        } else if let h = here {
+            ("This directory", Theme.bytes(total), h.name, h.path)
         } else {
             ("Reclaimable", Theme.bytes(total), "\(slices.filter { $0.bytes > 0 }.count) places", "~")
         }
@@ -228,7 +236,7 @@ struct RootView: View {
     /// Breadcrumb after "All places".
     private var crumbs: [String] {
         switch screen {
-        case .chart: open.map { [$0.name] } ?? []
+        case .chart: open.map { [$0.name] + path.map(\.lastPathComponent) } ?? []
         case .deleteList: ["Delete list"]
         case .autoClean: ["Auto-clean"]
         case .history(nil): ["History"]
@@ -258,10 +266,24 @@ struct RootView: View {
         return pct < 1 ? "<1%" : "\(Int(pct.rounded()))%"
     }
 
+    private func item(_ id: String) -> ScanItem? {
+        open == nil ? nil : openResult?.items.first { $0.id == id }
+    }
+
+    private func toggle(_ item: ScanItem) {
+        guard let c = open, !item.isProtected else { return }
+        if basket.removeValue(forKey: item) == nil { basket[item] = c }
+    }
+
     private func tapped(_ id: String) {
-        if let c = open {
-            guard let item = model.results[c]?.items.first(where: { $0.id == id }) else { return }
-            if basket.removeValue(forKey: item) == nil { basket[item] = c }
+        if open != nil {
+            guard let item = item(id) else { return }
+            if item.isDirectory {
+                withAnimation(.easeInOut(duration: 0.25)) { path.append(item.url); hovered = nil }
+                if folders[item.url] == nil { load(item.url) }
+            } else {
+                toggle(item)
+            }
         } else if let c = Category(rawValue: id) {
             if model.results[c]?.status == .needsAccess { ScanModel.openFullDiskAccessSettings(); return }
             withAnimation(.easeInOut(duration: 0.25)) { open = c; hovered = nil }
@@ -271,9 +293,16 @@ struct RootView: View {
     private func goBack() {
         guard !deleting else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
-            if case .history(_?) = screen { screen = .history(run: nil) } else if screen != .chart { screen = .chart } else { open = nil }
+            if case .history(_?) = screen { screen = .history(run: nil) } else if screen != .chart { screen = .chart }
+            else if !path.isEmpty { path.removeLast() } else { open = nil; folders = [:] }
             hovered = nil
         }
+    }
+
+    private func load(_ url: URL) {
+        guard let c = open else { return }
+        folders[url] = CategoryResult(category: c, status: .scanning, items: [])
+        Task { folders[url] = await Task.detached { DiskScanner.contents(of: url, in: c) }.value }
     }
 
     private func go(_ s: Screen) {
@@ -294,6 +323,8 @@ struct RootView: View {
             let done = batch.filter { !failedPaths.contains($0.key.url.path(percentEncoded: false)) }
             for item in done.keys { basket[item] = nil }
             Set(done.values).forEach(model.rescan)
+            folders = [:]
+            path.forEach(load)
             deleting = false
             if !failed.isEmpty {
                 errorMessage = failed.map { "\($0.name): \($0.error ?? "")" }.sorted().joined(separator: "\n")
