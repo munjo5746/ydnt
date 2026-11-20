@@ -94,6 +94,7 @@ enum DiskScanner {
 @MainActor @Observable
 final class ScanModel {
     var results: [Category: CategoryResult] = [:]
+    private(set) var order: [Category] = []   // categories in the order their scan finished
     var isScanning: Bool { results.values.contains { $0.status == .scanning } }
     var needsAccess: Bool { results.values.contains { $0.status == .needsAccess } }
     private(set) var scannedAt: Date?
@@ -107,15 +108,20 @@ final class ScanModel {
     func scanAll() {
         if ProcessInfo.processInfo.arguments.contains("--fake") {
             results = Dictionary(uniqueKeysWithValues: Fixtures.fake.map { ($0.category, $0) })
+            order = Fixtures.fake.map(\.category)
             scannedAt = .now
             return
         }
         task?.cancel()
         for c in Category.allCases { results[c] = CategoryResult(category: c, status: .scanning, items: []) }
+        order = []
         task = Task {
             await withTaskGroup(of: CategoryResult.self) { group in
                 for c in Category.allCases { group.addTask { DiskScanner.scan(c) } }
-                for await r in group where !Task.isCancelled { results[r.category] = r }
+                for await r in group where !Task.isCancelled {
+                    results[r.category] = r
+                    if !order.contains(r.category) { order.append(r.category) }
+                }
             }
             if !Task.isCancelled { scannedAt = .now }
         }

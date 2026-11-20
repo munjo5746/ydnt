@@ -162,16 +162,18 @@ struct SpacePart: Identifiable {
     var id: String { name }
 
     static let other = Color(hex: 0x5B5E66)
+    static let free = Theme.soft            // light gray
 
-    /// Scanned categories, largest first, then "Other" for everything the scan doesn't cover (apps, system…).
+    /// Scanned categories in the order their scan finished (so the bar fills left to right),
+    /// then "Other" for everything the scan doesn't cover (apps, system…).
     /// While a scan runs, that rest is "Scanning…" instead: it can't yet tell Other from unmeasured categories.
     /// Large Files is left out: those files already sit inside Home Folder or Downloads, so they'd count twice.
     @MainActor static func usage(_ scan: ScanModel, _ disk: DiskSpace) -> [SpacePart] {
         guard disk.total > 0, !scan.results.isEmpty else { return [] }
         let used = disk.total - disk.available
-        var cats = Category.allCases.filter { $0 != .largeFiles }
+        let ordered = scan.order + Category.allCases.filter { !scan.order.contains($0) }
+        var cats = ordered.filter { $0 != .largeFiles }
             .compactMap { c in scan.results[c].flatMap { $0.status == .scanned && $0.bytes > 0 ? (c, $0.bytes) : nil } }
-            .sorted { $0.1 > $1.1 }
         // Scans and the volume's free figure aren't measured the same way; never let the parts outgrow "used".
         let scanned = cats.reduce(0) { $0 + $1.1 }
         if scanned > used { cats = cats.map { ($0.0, Int64(Double($0.1) * Double(used) / Double(scanned))) } }
@@ -183,7 +185,7 @@ struct SpacePart: Identifiable {
     }
 }
 
-/// Disk bar like macOS's storage bar: used space split by category from the left, free space empty on the right
+/// Disk bar like macOS's storage bar: used space split by category from the left, free space light gray on the right
 /// (amber when low), with optional start/stop markers (in % free).
 struct SpaceBar: View {
     let free: Double            // 0...1
@@ -207,7 +209,7 @@ struct SpaceBar: View {
                         .padding(.trailing, 1)      // hairline gap between parts
                         .help(p.scanning ? "Still scanning" : p.bytes > 0 ? "\(p.name): \(Theme.bytes(p.bytes))" : p.name)
                     }
-                    Rectangle().fill(low ? Theme.warn : Theme.track)
+                    Rectangle().fill(low ? Theme.warn : SpacePart.free)
                         .help("Free")
                 }
                 .background(Theme.track)
@@ -222,10 +224,13 @@ struct SpaceBar: View {
                             + shown.filter { $0.bytes > 0 }.map { $0.scanning ? ". Still scanning" : ". \($0.name) \(Theme.bytes($0.bytes))" }.joined())
     }
 
+    /// Dark outline so the marker reads on the light free space too.
     private func mark(_ pct: Int, _ color: Color, _ w: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: 1).fill(color)
             .frame(width: 2, height: height + 6)
-            .offset(x: w * (1 - Double(pct) / 100) - 1)
+            .padding(1)
+            .background(Theme.ink, in: RoundedRectangle(cornerRadius: 2))
+            .offset(x: w * (1 - Double(pct) / 100) - 2)
     }
 }
 
@@ -267,7 +272,7 @@ struct SpaceLegend: View {
                     item(p.color, p.name, p.bytes)
                 }
             }
-            item(Theme.track, "Free", free)
+            item(SpacePart.free, "Free", free)
         }
         .font(.system(size: 12))
     }
